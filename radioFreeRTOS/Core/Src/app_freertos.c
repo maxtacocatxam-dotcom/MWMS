@@ -23,6 +23,7 @@
 #include "main.h"
 #include "cmsis_os2.h"
 #include "FreeRTOS.h"
+#include "app_radio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -54,19 +55,9 @@ osThreadId_t radioTaskHandle;
 const osThreadAttr_t radioTask_attributes = {
   .name = "radioTask",
   .priority = (osPriority_t) osPriorityNormal,
-  .stack_size = 128 * 4
+  .stack_size = 256 * 4
 };
-/* Definitions for radioQueue */
-osMessageQueueId_t radioQueueHandle;
-uint8_t radioQueueBuffer[ 8 * sizeof( uint8_t ) ];
-osStaticMessageQDef_t radioQueueControlBlock;
-const osMessageQueueAttr_t radioQueue_attributes = {
-  .name = "radioQueue",
-  .cb_mem = &radioQueueControlBlock,
-  .cb_size = sizeof(radioQueueControlBlock),
-  .mq_mem = &radioQueueBuffer,
-  .mq_size = sizeof(radioQueueBuffer)
-};
+
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -100,8 +91,6 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE END RTOS_TIMERS */
 
   /* Create the queue(s) */
-  /* creation of radioQueue */
-  radioQueueHandle = osMessageQueueNew (8, sizeof(uint8_t), &radioQueue_attributes);
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
@@ -110,7 +99,7 @@ void MX_FREERTOS_Init(void) {
 
   /* Create the thread(s) */
   /* creation of radioTask */
-  radioTaskHandle = osThreadNew(StartDefaultTask, NULL, &radioTask_attributes);
+  radioTaskHandle = osThreadNew(radioTx, NULL, &radioTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -122,23 +111,7 @@ void MX_FREERTOS_Init(void) {
 
 }
 
-/* USER CODE BEGIN Header_StartDefaultTask */
-/**
-  * @brief  Function implementing the radioTask thread.
-  * @param  argument: Not used
-  * @retval None
-  */
-/* USER CODE END Header_StartDefaultTask */
-void StartDefaultTask(void *argument)
-{
-  /* USER CODE BEGIN StartDefaultTask */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
-  /* USER CODE END StartDefaultTask */
-}
+
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */

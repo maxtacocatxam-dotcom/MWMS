@@ -84,3 +84,4 @@ void HAL_SUBGHZ_MspDeInit(SUBGHZ_HandleTypeDef* subghzHandle)
 /* USER CODE BEGIN 1 */
 
 /* USER CODE END 1 */
+

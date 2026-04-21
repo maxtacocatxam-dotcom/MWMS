@@ -20,10 +20,10 @@
 #include "main.h"
 #include "cmsis_os2.h"
 #include "FreeRTOS.h"
+#include "i2c.h"
 #include "subghz.h"
 #include "usart.h"
 #include "gpio.h"
-#include "app_radio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -94,7 +94,8 @@ int main(void)
   MX_GPIO_Init();
   MX_SUBGHZ_Init();
   MX_USART2_UART_Init();
-
+  MX_I2C2_Init();
+  MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
   radioInit();
   /* USER CODE END 2 */

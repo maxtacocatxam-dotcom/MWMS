@@ -24,6 +24,8 @@
 #include "subghz.h"
 #include "usart.h"
 #include "gpio.h"
+#include "app_radio.h"
+#include "app_GPS.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -98,6 +100,8 @@ int main(void)
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
   radioInit();
+  Ringbuf_init();
+  gps_init();
   /* USER CODE END 2 */
 
   /* Init scheduler */

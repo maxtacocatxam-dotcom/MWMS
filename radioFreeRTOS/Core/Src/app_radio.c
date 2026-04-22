@@ -22,22 +22,20 @@
 
 const RadioLoRaBandwidths_t Bandwidths[] = { LORA_BW_125, LORA_BW_250, LORA_BW_500 };
 
-PacketParams_t packetParams;
-
 void RadioOnDioIrq(RadioIrqMasks_t radioIrq);
 
-
+PacketParams_t packetParams;
 /* Definitions for radioQueue */
-osMessageQueueId_t radioQueueHandle;
-uint8_t radioQueueBuffer[ 8 * sizeof( radio_event_t ) ];
-StaticQueue_t radioQueueControlBlock;
-const osMessageQueueAttr_t radioQueue_attributes = {
-  .name = "radioQueue",
-  .cb_mem = &radioQueueControlBlock,
-  .cb_size = sizeof(radioQueueControlBlock),
-  .mq_mem = &radioQueueBuffer,
-  .mq_size = sizeof(radioQueueBuffer)
-};
+extern osMessageQueueId_t radioQueueHandle;
+//uint8_t radioQueueBuffer[ 8 * sizeof( radio_event_t ) ];
+//StaticQueue_t radioQueueControlBlock;
+//const osMessageQueueAttr_t radioQueue_attributes = {
+//  .name = "radioQueue",
+//  .cb_mem = &radioQueueControlBlock,
+//  .cb_size = sizeof(radioQueueControlBlock),
+//  .mq_mem = &radioQueueBuffer,
+//  .mq_size = sizeof(radioQueueBuffer)
+//};
 
 /**
   * @brief  Initialize the Sub-GHz radio and dependent hardware.
@@ -45,9 +43,6 @@ const osMessageQueueAttr_t radioQueue_attributes = {
   */
 void radioInit(void)
 {
-
-  /* creation of radioQueue */
-  radioQueueHandle = osMessageQueueNew (8, sizeof(radio_event_t), &radioQueue_attributes);
   // Initialize the hardware (SPI bus, TCXO control, RF switch)
   SUBGRF_Init(RadioOnDioIrq);
 
@@ -124,13 +119,8 @@ void RadioOnDioIrq(RadioIrqMasks_t radioIrq)
  portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 }
 
-void radioTx()
+void radioTx(uint8_t *payload, uint8_t len)
 {
-  radio_event_t event;
-  for(;;){
-	  osDelay(5000);
-	  //HAL_UART_Transmit(&huart2, (uint8_t *)"...PING\r\n", 9, HAL_MAX_DELAY);
-	  //HAL_UART_Transmit(&huart2, (uint8_t *)"Master Tx start\r\n", 17, HAL_MAX_DELAY);
 	  SUBGRF_SetDioIrqParams( IRQ_TX_DONE | IRQ_RX_TX_TIMEOUT,
 							  IRQ_TX_DONE | IRQ_RX_TX_TIMEOUT,
 							  IRQ_RADIO_NONE,
@@ -140,20 +130,7 @@ void radioTx()
 	  SUBGRF_WriteRegister(0x0889, (SUBGRF_ReadRegister(0x0889) | 0x04));
 	  packetParams.Params.LoRa.PayloadLength = 0x4;
 	  SUBGRF_SetPacketParams(&packetParams);
-	  SUBGRF_SendPayload((uint8_t *)"PING", 4, 0);
-	  if(xQueueReceive(radioQueueHandle, &event, pdMS_TO_TICKS(2000))){
-	  	  if(event == EVENT_TX_DONE){
-	  		  //HAL_UART_Transmit(&huart2, (uint8_t *)"Success\r\n", 17, HAL_MAX_DELAY);
-	  	  }
-	  	  else{
-	  		  //HAL_UART_Transmit(&huart2, (uint8_t *)"Failure Retrying\r\n", 17, HAL_MAX_DELAY);
-	  		  SUBGRF_SetPacketParams(&packetParams);
-	  	      SUBGRF_SendPayload((uint8_t *)"PING", 4, 0);
-	  	  }
-	  }
-   }
-  //In case we accidentally exit from task loop
-    osThreadTerminate(NULL);
+	  SUBGRF_SendPayload(payload, len, 0);
 }
 
 

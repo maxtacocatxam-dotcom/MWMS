@@ -37,14 +37,32 @@ extern UART_HandleTypeDef huart1;
 extern UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN Private defines */
+#define UART_BUFFER_SIZE 1024
 
+typedef struct
+{
+  unsigned char buffer[UART_BUFFER_SIZE];
+  volatile unsigned int head;
+  volatile unsigned int tail;
+} ring_buffer;
 /* USER CODE END Private defines */
 
 void MX_USART1_UART_Init(void);
 void MX_USART2_UART_Init(void);
 
 /* USER CODE BEGIN Prototypes */
+void Ringbuf_init(void);
+void uart_rx_isr(void);
+int uart_read(void);
+int uart_available(void);
+void uart1_transmit(uint8_t c);
 
+
+//GPS prototypes
+extern ring_buffer gps_rx_buffer;
+int gps_uart_available(void);
+int gps_uart_read(void);
+void gps_uart_rx_isr(void);
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus

@@ -21,7 +21,14 @@
 #include "usart.h"
 
 /* USER CODE BEGIN 0 */
+#include "string.h"
+#include "stdio.h"
+ring_buffer rx_buffer;
+ring_buffer tx_buffer;
 
+int rb_read(ring_buffer *rb);
+int rb_available(ring_buffer *rb);
+void store_char(uint8_t c, ring_buffer *rb);
 /* USER CODE END 0 */
 
 UART_HandleTypeDef huart1;
@@ -243,6 +250,90 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
 }
 
 /* USER CODE BEGIN 1 */
+ring_buffer gps_rx_buffer;
 
+void gps_uart_rx_isr(void) {
+	if (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_RXNE)) {
+		uint8_t c = (uint8_t)(huart1.Instance->RDR);
+		store_char(c, &gps_rx_buffer);
+	}
+}
+
+int gps_uart_available(void) {
+	return rb_available(&gps_rx_buffer);
+}
+
+int gps_uart_read(void) {
+	return rb_read(&gps_rx_buffer);
+}
+
+void Ringbuf_init(void){
+	//Initializing both RX and TX buffers
+	memset(rx_buffer.buffer, 0, UART_BUFFER_SIZE);
+	rx_buffer.head = 0;
+	rx_buffer.tail = 0;
+	memset(tx_buffer.buffer, 0, UART_BUFFER_SIZE);
+	tx_buffer.head = 0;
+	tx_buffer.tail = 0;
+
+	//Enabling uart data register not empty interrupt
+	 __HAL_UART_CLEAR_FLAG(&huart2, UART_FLAG_RXNE);
+	 __HAL_UART_ENABLE_IT(&huart2, UART_IT_RXNE);
+
+	 //enabling GPS UART Ring buffer
+	 memset(gps_rx_buffer.buffer, 0, UART_BUFFER_SIZE);
+	 gps_rx_buffer.head = 0;
+	 gps_rx_buffer.tail = 0;
+	 __HAL_UART_CLEAR_FLAG(&huart1, UART_FLAG_RXNE);
+	 __HAL_UART_ENABLE_IT(&huart1, UART_IT_RXNE);
+}
+int uart_read(void){
+	return rb_read(&rx_buffer);
+}
+int uart_available(void){
+	return rb_available(&rx_buffer);
+}
+
+void store_char(uint8_t c, ring_buffer *rb){
+	//Computing the next head index with wraparound
+	uint16_t next = ((rb->head) + 1) % UART_BUFFER_SIZE;
+	//If the next head equals the tail, then the buffer is full and the byte is dropped
+	if(next == rb->tail){
+		return;
+	}
+	rb->buffer[rb->head] = c;
+	rb->head = next;
+}
+
+int rb_read(ring_buffer *rb){
+	//If head = tail, no new characters
+	if(rb->head == rb->tail){
+		return -1;
+	}
+	else{
+		//Reading the byte at the tail
+		uint8_t c = rb->buffer[rb->tail];
+		rb->tail = (rb->tail + 1) % UART_BUFFER_SIZE;
+		return c;
+	}
+}
+
+int rb_available(ring_buffer *rb){
+	return (UART_BUFFER_SIZE + rb->head - rb->tail) % UART_BUFFER_SIZE;
+}
+
+void uart_rx_isr(void){
+	//When new data flag goes off, store the data into the rx buffer
+	if(__HAL_UART_GET_FLAG(&huart2, UART_FLAG_RXNE)){
+		uint8_t c = (uint8_t)(huart2.Instance->RDR);
+		store_char(c, &rx_buffer);
+	}
+}
+
+void uart1_transmit(uint8_t c){
+	//char uartBuff[100];
+	//sprintf(uartBuff, "%d \n", c);
+	HAL_UART_Transmit(&huart1, &c, 1, HAL_MAX_DELAY);
+}
 /* USER CODE END 1 */
 

@@ -101,7 +101,9 @@ int main(void)
   /* USER CODE BEGIN 2 */
   radioInit();
   Ringbuf_init();
-  gps_init();
+  if (gps_init()!=GPS_OK){
+	  Error_Handler();
+  }
   /* USER CODE END 2 */
 
   /* Init scheduler */

@@ -10,6 +10,7 @@
 #include "cmsis_os2.h"
 #include "FreeRTOS.h"
 #include "queue.h"
+#include "usart.h"
 
 
 #define RF_FREQUENCY                                915000000 /* Hz */
@@ -121,6 +122,7 @@ void RadioOnDioIrq(RadioIrqMasks_t radioIrq)
 
 void radioTx(uint8_t *payload, uint8_t len)
 {
+	HAL_UART_Transmit(&huart2, (uint8_t*)"Tx", 2, 100);
 	  SUBGRF_SetDioIrqParams( IRQ_TX_DONE | IRQ_RX_TX_TIMEOUT,
 							  IRQ_TX_DONE | IRQ_RX_TX_TIMEOUT,
 							  IRQ_RADIO_NONE,
@@ -128,7 +130,7 @@ void radioTx(uint8_t *payload, uint8_t len)
 	  SUBGRF_SetSwitch(RFO_LP, RFSWITCH_TX);
 	  // Workaround 5.1 in DS.SX1261-2.W.APP (before each packet transmission)
 	  SUBGRF_WriteRegister(0x0889, (SUBGRF_ReadRegister(0x0889) | 0x04));
-	  packetParams.Params.LoRa.PayloadLength = 0x4;
+	  packetParams.Params.LoRa.PayloadLength = len;
 	  SUBGRF_SetPacketParams(&packetParams);
 	  SUBGRF_SendPayload(payload, len, 0);
 }

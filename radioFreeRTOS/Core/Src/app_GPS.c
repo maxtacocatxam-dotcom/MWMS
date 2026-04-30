@@ -9,6 +9,7 @@
 #include "stm32wlxx_hal.h"
 #include "u-blox_config_keys.h"
 #include "usart.h"
+#include "cmsis_os2.h"
 #include <stdio.h>
 #include <stdbool.h>
 
@@ -225,7 +226,10 @@ GPS_Status gps_call_location(GPS_PVT *out){
 	uint32_t start = HAL_GetTick();
 
 	while ((HAL_GetTick() - start) < 2000){ //timeout condition
-		if (!gps_uart_available()) continue;
+		if (!gps_uart_available()) {
+			osDelay(1);
+			continue;
+		}
 		uint8_t b = (uint8_t)gps_uart_read(); //similar to the ack wait
 
 		switch (state) {
@@ -312,27 +316,50 @@ GPS_Status gps_config_nmea(uint8_t state) {
  * current settings: BeiDou ONLY
  */
 GPS_Status gps_config_GNSS(void) {
-	uint8_t payload[4 + 5 * 6]; //Header + 6 constellations
-	uint16_t offset = 0;
-	payload[offset++] = 0x00; //version
-	payload[offset++] = 0x01; //ram
-	payload[offset++] = 0x00; //reserved
-	payload[offset++] = 0x00; //reserved
+	struct {uint32_t key; uint8_t val; const char *name;
+	} keys[] = {
+			{ UBLOX_CFG_SIGNAL_BDS_ENA,0x01, "BDS" },
+			{UBLOX_CFG_SIGNAL_GLO_ENA, 0x00, "GLO" },
+			{UBLOX_CFG_SIGNAL_GAL_ENA, 0x01, "GAL" },
+			{ UBLOX_CFG_SIGNAL_QZSS_ENA, 0x00, "QZSS" },
+			{UBLOX_CFG_SIGNAL_SBAS_ENA, 0x00, "SBAS" },
+			{ UBLOX_CFG_SIGNAL_GPS_ENA, 0x01, "GPS" }
+	};
 
-	//Keys from cfg header
-	valset_append_bool(payload, &offset, UBLOX_CFG_SIGNAL_GPS_ENA, 0x01);
-	valset_append_bool(payload, &offset, UBLOX_CFG_SIGNAL_SBAS_ENA, 0x01);
-	valset_append_bool(payload, &offset, UBLOX_CFG_SIGNAL_GAL_ENA, 0x01);
-	valset_append_bool(payload, &offset, UBLOX_CFG_SIGNAL_BDS_ENA, 0x01);
-	valset_append_bool(payload, &offset, UBLOX_CFG_SIGNAL_QZSS_ENA, 0x01);
-	valset_append_bool(payload, &offset, UBLOX_CFG_SIGNAL_GLO_ENA, 0x01);
 
-	if (gps_send(GPS_CLASS_CFG, GPS_CFG_VALSET, payload, offset) != GPS_OK){
-		return GPS_ERROR;
+	for (int i = 0; i < 6; i++) {
+		uint8_t payload[4 + 5]; //Header + constellation
+		uint16_t offset = 0;
+		payload[offset++] = 0x00; //version
+		payload[offset++] = 0x01; //ram
+		payload[offset++] = 0x00; //reserved
+		payload[offset++] = 0x00; //reserved
+		valset_append_bool(payload, &offset, keys[i].key, keys[i].val);
+
+		while (gps_uart_available())
+			gps_uart_read(); //flush before sending
+
+		HAL_UART_Transmit(&huart2, (uint8_t*) keys[i].name, strlen(keys[i].name), 100);
+		HAL_UART_Transmit(&huart2, (uint8_t*) ": ", 2, 100);
+
+		if (gps_send(GPS_CLASS_CFG, GPS_CFG_VALSET, payload, offset)
+				!= GPS_OK) {
+			HAL_UART_Transmit(&huart2, (uint8_t*) "SEND FAILED\r\n", 13, 100);
+			return GPS_ERROR;
+		}
+
+		GPS_Status result = gps_ack_wait(GPS_CLASS_CFG, GPS_CFG_VALSET, 2000);
+		if (result == GPS_OK) {
+			HAL_UART_Transmit(&huart2, (uint8_t*) "ACK WIN\r\n", 9, 100);
+			HAL_Delay(500); //after configuring GNSS needs a 500ms delay
+			while (gps_uart_available())
+				gps_uart_read(); //flush noise from new config out
+		} else {
+			HAL_UART_Transmit(&huart2, (uint8_t*) "ACK FAIL\r\n", 10, 100);
+			return GPS_ERROR;
+		}
 	}
-
-	GPS_Status result = gps_ack_wait(GPS_CLASS_CFG, GPS_CFG_VALSET, 2000);
-	return result;
+	return GPS_OK;
 }
 /**
  * gps_init: initializes the GPS in the chosen configuration
@@ -340,10 +367,10 @@ GPS_Status gps_config_GNSS(void) {
 GPS_Status gps_init(void){
 	HAL_Delay(2000); //Let module boot
 	if (gps_config_nmea(0x00) != GPS_OK) {
-		Error_Handler();
+		return GPS_ERROR;
 	}
 	if (gps_config_GNSS() != GPS_OK){
-		Error_Handler();
+		return GPS_ERROR;
 	}
 	return GPS_OK;
 }

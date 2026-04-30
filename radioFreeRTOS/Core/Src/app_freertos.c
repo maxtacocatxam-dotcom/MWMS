@@ -25,12 +25,12 @@
 #include "task.h"
 #include "main.h"
 #include "cmsis_os2.h"
-#include "FreeRTOS.h"
 #include "app_radio.h"
 #include "app_GPS.h"
 #include "usart.h"
 #include "radio_driver.h"
 #include "queue.h"
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -141,6 +141,9 @@ void MX_FREERTOS_Init(void) {
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
+/*
+ * RadioTask:
+ */
 void RadioTask(void *argument){
 	GPS_PVT pvt;
 	radio_event_t event;
@@ -148,23 +151,72 @@ void RadioTask(void *argument){
 		 if (osMessageQueueGet(gpsQueueHandle, &pvt, NULL, osWaitForever) == osOK){
 			 uint8_t payload[12];
 			 // encode pvt to payload
-			 radioTx(payload, sizeof(payload));
-			 //wait for irq results
-			 if (xQueueReceive(radioQueueHandle, &event, pdMS_TO_TICKS(2000))){
-				 if (event != EVENT_TX_DONE) {
-					 radioTx(payload, sizeof(payload));
-				 }
-			 }
-		 }
+			payload[0] = (pvt.lat >> 24) & 0xFF;
+			payload[1] = (pvt.lat >> 16) & 0xFF;
+			payload[2] = (pvt.lat >> 8) & 0xFF;
+			payload[3] = (pvt.lat) & 0xFF;
+			payload[4] = (pvt.lon >> 24) & 0xFF;
+			payload[5] = (pvt.lon >> 16) & 0xFF;
+			payload[6] = (pvt.lon >> 8) & 0xFF;
+			payload[7] = (pvt.lon) & 0xFF;
+			payload[8] = pvt.gnssFixOK;
+			payload[9] = pvt.hour;
+			payload[10] = pvt.min;
+			payload[11] = pvt.sec;
+			//check payload over UART
+			HAL_UART_Transmit(&huart2, (uint8_t*)"TX payload: ", 12, 100);
+			for (int i = 0; i < 12; i++) {
+			    char hex[6];
+			    int hlen = snprintf(hex, sizeof(hex), "%02X ", payload[i]);
+			    HAL_UART_Transmit(&huart2, (uint8_t*)hex, hlen, 100);
+			}
+			HAL_UART_Transmit(&huart2, (uint8_t*) "\r\n", 2, 100);
+			//send the location payload
+			radioTx(payload, sizeof(payload));
+			//wait for irq results
+			if (xQueueReceive(radioQueueHandle, &event, pdMS_TO_TICKS(2000))) {
+				if (event != EVENT_TX_DONE) {
+					radioTx(payload, sizeof(payload));
+				}
+			}
+		}
 	}
 }
+/*
+ * GpsTask:
+ */
 void GpsTask(void *argument){
 	GPS_PVT pvt;
+	char msg[48];
+	int len;
 	for(;;) {
-		if (gps_call_location(&pvt) == GPS_OK && pvt.gnssFixOK){
+		len = snprintf(msg, sizeof(msg), "loop tick\r\n");
+		HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
+
+		GPS_Status ret = gps_call_location(&pvt);
+
+		len = snprintf(msg, sizeof(msg), "ret=%d fix=%d\r\n", ret, pvt.gnssFixOK);
+		HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
+
+		if (ret == GPS_OK && pvt.gnssFixOK){
 			osMessageQueuePut(gpsQueueHandle, &pvt, 0, 0);
 		}
-		osDelay(5000);
+
+		osDelay(500);
 	}
+//	GPS_PVT pvt;
+//	    GPS_Status ret;  // or whatever your return type is
+//	    char msg[48];
+//	    int len;
+//	    for(;;) {
+//	        ret = gps_call_location(&pvt);
+//	        if (ret == GPS_OK && pvt.gnssFixOK){
+//	            osMessageQueuePut(gpsQueueHandle, &pvt, 0, 0);
+//	        } else {
+//	            len = snprintf(msg, sizeof(msg), "ret=%d fix=%d\r\n", ret, pvt.gnssFixOK);
+//	            HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
+//	        }
+//	        osDelay(500);
+//	    }
 }
 /* USER CODE END Application */

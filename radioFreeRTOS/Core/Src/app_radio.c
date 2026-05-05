@@ -88,7 +88,7 @@ void radioInit(void)
 }
 
 /**
-  * @brief  Receive data trough SUBGHZSPI peripheral
+  * @brief  Receive data through SUBGHZSPI peripheral
   * @param  radioIrq  interrupt pending status information
   * @retval None
   */
@@ -122,7 +122,7 @@ void RadioOnDioIrq(RadioIrqMasks_t radioIrq)
 
 void radioTx(uint8_t *payload, uint8_t len)
 {
-	HAL_UART_Transmit(&huart2, (uint8_t*)"Tx", 2, 100);
+	  //HAL_UART_Transmit(&huart2, (uint8_t*)"Tx", 2, 100);
 	  SUBGRF_SetDioIrqParams( IRQ_TX_DONE | IRQ_RX_TX_TIMEOUT,
 							  IRQ_TX_DONE | IRQ_RX_TX_TIMEOUT,
 							  IRQ_RADIO_NONE,

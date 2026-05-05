@@ -22,6 +22,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "FreeRTOS.h"
+#include "FreeRTOSConfig.h"
 #include "task.h"
 #include "main.h"
 #include "cmsis_os2.h"
@@ -31,6 +32,8 @@
 #include "radio_driver.h"
 #include "queue.h"
 #include <stdio.h>
+#include "BME680.h"
+#include "app_cfg.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -51,7 +54,7 @@ typedef StaticQueue_t osStaticMessageQDef_t;
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
-
+QueueHandle_t xSensorQueue;
 //Radio Task variables
 osMessageQueueId_t radioQueueHandle;
 uint8_t radioQueueBuffer[ 8 * sizeof( radio_event_t ) ];
@@ -87,6 +90,7 @@ const osThreadAttr_t gpsTask_attributes = {
 /* USER CODE BEGIN FunctionPrototypes */
 void GpsTask(void *argument);
 void RadioTask(void *argument);
+void vSensorTask(void *pvParameters);
 /* USER CODE END FunctionPrototypes */
 
 void StartDefaultTask(void *argument);
@@ -121,10 +125,18 @@ void MX_FREERTOS_Init(void) {
   /* add queues, ... */
 	radioQueueHandle = osMessageQueueNew (8, sizeof(radio_event_t), &radioQueue_attributes);
 	gpsQueueHandle = osMessageQueueNew (4, sizeof(GPS_PVT), &gpsQueue_attributes);
+	xSensorQueue = xQueueCreate(3, sizeof(sensor_msg_t)); //Initializing sensor queue
+    //xMsgQueue = xQueueCreate(2, 64); //Initializing msg queue with a length of 2 and width of 64 for payload
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
   /* creation of radioTask */
+  xTaskCreate( vSensorTask, //Pointer to function which implements the task
+			   "Sensor Task",
+				SENSOR_TASK_STACK,
+				NULL,
+				SENSOR_TASK_PRIO,
+				NULL);
 	radioTaskHandle = osThreadNew(RadioTask, NULL, &radioTask_attributes);
 	gpsTaskHandle = osThreadNew(GpsTask, NULL, &gpsTask_attributes);
   /* USER CODE BEGIN RTOS_THREADS */
@@ -204,6 +216,7 @@ void GpsTask(void *argument){
 
 		osDelay(500);
 	}
+
 //	GPS_PVT pvt;
 //	    GPS_Status ret;  // or whatever your return type is
 //	    char msg[48];
@@ -218,5 +231,39 @@ void GpsTask(void *argument){
 //	        }
 //	        osDelay(500);
 //	    }
+}
+
+/* The following code refers to the task creation of our bme680 */
+
+void vSensorTask(void *pvParameters){
+
+sensor_msg_t sentData; //Data being sent to the queue
+bme680_init(); //Initializing the sensor
+bme680_config(); //Configuring all registers for measurements and acquiring compensation values required
+
+while(1){
+	vTaskDelay(pdMS_TO_TICKS(1000)); //Periodic Task
+	//Gas reference will run 10 forced measurements to acquire average gas measurement and heat the hot plate
+	//This will take app. 1.5 seconds, but it uses vTaskDelay to give up the CPU in the meantime
+	bme68x_GetGasReference(); //Gas reference will assign all raw data and performs the compensation math for the gas measurement
+
+	//Performing the rest of the compensations, all will change the compensated data struct private to this file
+	bme680_temp_comp();
+	bme680_press_comp();
+	bme680_hum_comp();
+
+	//Filling the struct which will contain the data being sent
+	sentData.humidity = (uint16_t)bme680_get_humid();
+	sentData.temperature = (int16_t)bme680_get_temp();
+	sentData.pressure = (uint32_t)bme680_get_press();
+	sentData.iaq = (uint16_t)bme68x_iaq(); //This will obtain scores based off compensated humidity and gas, and perform IAQ calc
+	//Send data to sensor queue, will wake aggregator task to create payload for radio
+	if(xQueueSendToBack( xSensorQueue, &sentData, pdMS_TO_TICKS(5) ) != pdPASS){
+		//Will add debugging
+	}
+}
+  //In case we accidentally exit from task loop
+	vTaskDelete(NULL);
+
 }
 /* USER CODE END Application */

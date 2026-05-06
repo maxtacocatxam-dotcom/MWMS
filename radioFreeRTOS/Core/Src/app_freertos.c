@@ -132,6 +132,7 @@ void MX_FREERTOS_Init(void) {
 	radioQueueHandle = osMessageQueueNew (8, sizeof(radio_event_t), &radioQueue_attributes);
 	gpsQueueHandle = osMessageQueueNew (4, sizeof(GPS_PVT), &gpsQueue_attributes);
 	xMessageQueue = xQueueCreate(3, sizeof(Msg_t)); //Initializing sensor queue
+	xRadioQueue = xQueueCreate(3, 64);
     //xMsgQueue = xQueueCreate(2, 64); //Initializing msg queue with a length of 2 and width of 64 for payload
   /* USER CODE END RTOS_QUEUES */
 
@@ -143,8 +144,19 @@ void MX_FREERTOS_Init(void) {
 				NULL,
 				SENSOR_TASK_PRIO,
 				NULL);
+  xTaskCreate( vAggTask,
+		  	   "Aggregator Task",
+			   AGG_TASK_STACK,
+			   NULL,
+			   AGG_TASK_PRIO,
+			   NULL);
+  xTaskCreate( GpsTask,
+		  	   "GPS Task",
+			   GPS_TASK_STACK,
+			   NULL,
+			   GPS_TASK_PRIO,
+			   NULL);
 	radioTaskHandle = osThreadNew(RadioTask, NULL, &radioTask_attributes);
-	gpsTaskHandle = osThreadNew(GpsTask, NULL, &gpsTask_attributes);
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
   /* USER CODE END RTOS_THREADS */
@@ -165,37 +177,25 @@ void MX_FREERTOS_Init(void) {
 void RadioTask(void *argument){
 	char payload[64];
 	radio_event_t event;
+	char msg[48];
+	int len;
 	for(;;){
-		 if (osMessageQueueGet(xRadioQueue, &payload, NULL, osWaitForever) == osOK){
-//			 uint8_t payload[12];
-//			 // encode pvt to payload
-//			payload[0] = (pvt.lat >> 24) & 0xFF;
-//			payload[1] = (pvt.lat >> 16) & 0xFF;
-//			payload[2] = (pvt.lat >> 8) & 0xFF;
-//			payload[3] = (pvt.lat) & 0xFF;
-//			payload[4] = (pvt.lon >> 24) & 0xFF;
-//			payload[5] = (pvt.lon >> 16) & 0xFF;
-//			payload[6] = (pvt.lon >> 8) & 0xFF;
-//			payload[7] = (pvt.lon) & 0xFF;
-//			payload[8] = pvt.gnssFixOK;
-//			payload[9] = pvt.hour;
-//			payload[10] = pvt.min;
-//			payload[11] = pvt.sec;
-//			//check payload over UART
-//			HAL_UART_Transmit(&huart2, (uint8_t*)"TX payload: ", 12, 100);
-//			for (int i = 0; i < 12; i++) {
-//			    char hex[6];
-//			    int hlen = snprintf(hex, sizeof(hex), "%02X ", payload[i]);
-//			    HAL_UART_Transmit(&huart2, (uint8_t*)hex, hlen, 100);
-//			}
-//			HAL_UART_Transmit(&huart2, (uint8_t*) "\r\n", 2, 100);
-			//send the location payload
-			radioTx((uint8_t *)payload, sizeof(payload));
-			//wait for irq results
-			if (xQueueReceive(radioQueueHandle, &event, pdMS_TO_TICKS(2000))) {
-				if (event != EVENT_TX_DONE) {
-					radioTx((uint8_t *)payload, sizeof(payload));
-				}
+		xQueueReceive(xRadioQueue, payload, portMAX_DELAY);
+		len = snprintf(msg, sizeof(msg), "payload received");
+		HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
+		len = snprintf(msg, sizeof(msg), "Transmitting Payload");
+		HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
+		radioTx((uint8_t *)"HELLO", 5);
+		//wait for irq results
+		if (xQueueReceive(radioQueueHandle, &event, pdMS_TO_TICKS(2000))) {
+			if (event != EVENT_TX_DONE) {
+				len = snprintf(msg, sizeof(msg), "No Bueno");
+				HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
+				radioTx((uint8_t *)payload, sizeof(payload));
+			}
+			else{
+				len = snprintf(msg, sizeof(msg), "Transmit Complete");
+				HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
 			}
 		}
 	}
@@ -209,6 +209,7 @@ void GpsTask(void *argument){
 	char msg[48];
 	int len;
 	for(;;) {
+		osDelay(5000);
 		len = snprintf(msg, sizeof(msg), "loop tick\r\n");
 		HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
 
@@ -217,13 +218,13 @@ void GpsTask(void *argument){
 		len = snprintf(msg, sizeof(msg), "ret=%d fix=%d\r\n", ret, pvt.gnssFixOK);
 		HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
 
-		if (ret == GPS_OK && pvt.gnssFixOK){
+		if (ret == GPS_OK ){ //Excluded && pvt.gnssFixOK for debugging purposes
 			queueMsg.type = MSG_GPS; //Informing Aggregator of msg type
 			queueMsg.data.GPS_msg = pvt;
 			xQueueSendToBack( xMessageQueue, &queueMsg, pdMS_TO_TICKS(5) );
 		}
 
-		osDelay(500);
+
 	}
 
 //	GPS_PVT pvt;
@@ -249,9 +250,10 @@ void vSensorTask(void *pvParameters){
 Msg_t sentData; //Data being sent to the queue
 bme680_init(); //Initializing the sensor
 bme680_config(); //Configuring all registers for measurements and acquiring compensation values required
-
+char msg[48];
+int len;
 while(1){
-	vTaskDelay(pdMS_TO_TICKS(1000)); //Periodic Task
+	vTaskDelay(pdMS_TO_TICKS(5000)); //Periodic Task
 	//Gas reference will run 10 forced measurements to acquire average gas measurement and heat the hot plate
 	//This will take app. 1.5 seconds, but it uses vTaskDelay to give up the CPU in the meantime
 	bme68x_GetGasReference(); //Gas reference will assign all raw data and performs the compensation math for the gas measurement
@@ -267,6 +269,9 @@ while(1){
 	sentData.data.sens_msg.temperature = (int16_t)bme680_get_temp();
 	sentData.data.sens_msg.pressure = (uint32_t)bme680_get_press();
 	sentData.data.sens_msg.iaq = (uint16_t)bme68x_iaq(); //This will obtain scores based off compensated humidity and gas, and perform IAQ calc
+	//TODO: Fix the IAQ algorithm, also add dsp for the signals very noisy
+	len = snprintf(msg, sizeof(msg), "Sending Sensor to queue");
+	HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
 	//Send data to sensor queue, will wake aggregator task to create payload for radio
 	if(xQueueSendToBack( xMessageQueue, &sentData, pdMS_TO_TICKS(5) ) != pdPASS){
 		//Will add debugging
@@ -306,6 +311,8 @@ void vAggTask(void *pvParameters){
     uint32_t pressure;     // Pa
     uint16_t humidity;     // %RH * 100
     uint16_t iaq;          // 0–500
+    char msg[48];
+    int len;
 
     while(1){
     	xQueueReceive(xMessageQueue, &module_msg, portMAX_DELAY);
@@ -313,7 +320,9 @@ void vAggTask(void *pvParameters){
     	//Only implementing the sensor for right now, will implement with GPS after
 
     	if(module_msg.type == MSG_SENSOR){
-			sensor_flag = 1;
+    		len = snprintf(msg, sizeof(msg), "Received Sensor");
+    		HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
+    		sensor_flag = 1;
 			//msg will be of the same struct as the structured data sent //into the queue, so we then copy over msg into local
 			//variables in the function
 			iaq = module_msg.data.sens_msg.iaq;
@@ -323,6 +332,8 @@ void vAggTask(void *pvParameters){
 			}
 		else{
 			//right now the else case means it is from the gps
+			len = snprintf(msg, sizeof(msg), "Received GPS");
+			HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
 			gps_flag = 1;
 			 // encode pvt to payload
 			gpsBuff[0] = (module_msg.data.GPS_msg.lat >> 24) & 0xFF;
@@ -340,7 +351,11 @@ void vAggTask(void *pvParameters){
 		}
 			//if we have received both messages we then proceed to formatting
 			//the data into a LoRa transmission compatible message
-			if((sensor_flag & gps_flag) == 1){
+			if(sensor_flag && gps_flag){
+				len = snprintf(msg, sizeof(msg), "Aggregating Data");
+				HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
+				gps_flag = 0;
+				sensor_flag = 0; //Reset the flags
 				//Create the message, need to look more into this
 				//Converting temperature value into a string
 				temp_to_char(temp, tempBuffer, sizeof(tempBuffer));
@@ -353,9 +368,11 @@ void vAggTask(void *pvParameters){
 
 				//Appending all buffers with single snprint
 				snprintf(payload, sizeof(payload),
-						 "$%s,T=%s,H=%s,P=%s,IAQ=%s\n",
-						 gpsBuff,tempBuffer, humBuffer, pressBuffer, iaqBuffer);
-				xQueueSendToBack(xRadioQueue, &payload, pdMS_TO_TICKS(5));
+						 "$T=%s,H=%s,P=%s,IAQ=%s\n"
+						,tempBuffer, humBuffer, pressBuffer, iaqBuffer);
+				len = snprintf(msg, sizeof(msg), "Sending payload to queue");
+				HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
+				xQueueSendToBack(xRadioQueue, payload, pdMS_TO_TICKS(5));
 				//TODO: make this a struct which gives the length of the message so we know exactly how much to send
 
 			}

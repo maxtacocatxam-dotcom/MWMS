@@ -34,6 +34,7 @@
 #include <stdio.h>
 #include "BME680.h"
 #include "app_cfg.h"
+#include "message.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -44,6 +45,9 @@ typedef StaticQueue_t osStaticMessageQDef_t;
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+//Private Function Declarations
+void temp_to_char(int16_t temperature, char *tempBuffer, uint8_t bufferSize);
+void hum_to_char(uint32_t humidity, char *humidityBuffer, uint8_t bufferSize);
 
 /* USER CODE END PD */
 
@@ -54,7 +58,8 @@ typedef StaticQueue_t osStaticMessageQDef_t;
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
-QueueHandle_t xSensorQueue;
+QueueHandle_t xMessageQueue;
+QueueHandle_t xRadioQueue;
 //Radio Task variables
 osMessageQueueId_t radioQueueHandle;
 uint8_t radioQueueBuffer[ 8 * sizeof( radio_event_t ) ];
@@ -91,6 +96,7 @@ const osThreadAttr_t gpsTask_attributes = {
 void GpsTask(void *argument);
 void RadioTask(void *argument);
 void vSensorTask(void *pvParameters);
+void vAggTask(void *pvParameters);
 /* USER CODE END FunctionPrototypes */
 
 void StartDefaultTask(void *argument);
@@ -125,7 +131,7 @@ void MX_FREERTOS_Init(void) {
   /* add queues, ... */
 	radioQueueHandle = osMessageQueueNew (8, sizeof(radio_event_t), &radioQueue_attributes);
 	gpsQueueHandle = osMessageQueueNew (4, sizeof(GPS_PVT), &gpsQueue_attributes);
-	xSensorQueue = xQueueCreate(3, sizeof(sensor_msg_t)); //Initializing sensor queue
+	xMessageQueue = xQueueCreate(3, sizeof(Msg_t)); //Initializing sensor queue
     //xMsgQueue = xQueueCreate(2, 64); //Initializing msg queue with a length of 2 and width of 64 for payload
   /* USER CODE END RTOS_QUEUES */
 
@@ -157,38 +163,38 @@ void MX_FREERTOS_Init(void) {
  * RadioTask:
  */
 void RadioTask(void *argument){
-	GPS_PVT pvt;
+	char payload[64];
 	radio_event_t event;
 	for(;;){
-		 if (osMessageQueueGet(gpsQueueHandle, &pvt, NULL, osWaitForever) == osOK){
-			 uint8_t payload[12];
-			 // encode pvt to payload
-			payload[0] = (pvt.lat >> 24) & 0xFF;
-			payload[1] = (pvt.lat >> 16) & 0xFF;
-			payload[2] = (pvt.lat >> 8) & 0xFF;
-			payload[3] = (pvt.lat) & 0xFF;
-			payload[4] = (pvt.lon >> 24) & 0xFF;
-			payload[5] = (pvt.lon >> 16) & 0xFF;
-			payload[6] = (pvt.lon >> 8) & 0xFF;
-			payload[7] = (pvt.lon) & 0xFF;
-			payload[8] = pvt.gnssFixOK;
-			payload[9] = pvt.hour;
-			payload[10] = pvt.min;
-			payload[11] = pvt.sec;
-			//check payload over UART
-			HAL_UART_Transmit(&huart2, (uint8_t*)"TX payload: ", 12, 100);
-			for (int i = 0; i < 12; i++) {
-			    char hex[6];
-			    int hlen = snprintf(hex, sizeof(hex), "%02X ", payload[i]);
-			    HAL_UART_Transmit(&huart2, (uint8_t*)hex, hlen, 100);
-			}
-			HAL_UART_Transmit(&huart2, (uint8_t*) "\r\n", 2, 100);
+		 if (osMessageQueueGet(xRadioQueue, &payload, NULL, osWaitForever) == osOK){
+//			 uint8_t payload[12];
+//			 // encode pvt to payload
+//			payload[0] = (pvt.lat >> 24) & 0xFF;
+//			payload[1] = (pvt.lat >> 16) & 0xFF;
+//			payload[2] = (pvt.lat >> 8) & 0xFF;
+//			payload[3] = (pvt.lat) & 0xFF;
+//			payload[4] = (pvt.lon >> 24) & 0xFF;
+//			payload[5] = (pvt.lon >> 16) & 0xFF;
+//			payload[6] = (pvt.lon >> 8) & 0xFF;
+//			payload[7] = (pvt.lon) & 0xFF;
+//			payload[8] = pvt.gnssFixOK;
+//			payload[9] = pvt.hour;
+//			payload[10] = pvt.min;
+//			payload[11] = pvt.sec;
+//			//check payload over UART
+//			HAL_UART_Transmit(&huart2, (uint8_t*)"TX payload: ", 12, 100);
+//			for (int i = 0; i < 12; i++) {
+//			    char hex[6];
+//			    int hlen = snprintf(hex, sizeof(hex), "%02X ", payload[i]);
+//			    HAL_UART_Transmit(&huart2, (uint8_t*)hex, hlen, 100);
+//			}
+//			HAL_UART_Transmit(&huart2, (uint8_t*) "\r\n", 2, 100);
 			//send the location payload
-			radioTx(payload, sizeof(payload));
+			radioTx((uint8_t *)payload, sizeof(payload));
 			//wait for irq results
 			if (xQueueReceive(radioQueueHandle, &event, pdMS_TO_TICKS(2000))) {
 				if (event != EVENT_TX_DONE) {
-					radioTx(payload, sizeof(payload));
+					radioTx((uint8_t *)payload, sizeof(payload));
 				}
 			}
 		}
@@ -199,6 +205,7 @@ void RadioTask(void *argument){
  */
 void GpsTask(void *argument){
 	GPS_PVT pvt;
+	Msg_t queueMsg;
 	char msg[48];
 	int len;
 	for(;;) {
@@ -211,7 +218,9 @@ void GpsTask(void *argument){
 		HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
 
 		if (ret == GPS_OK && pvt.gnssFixOK){
-			osMessageQueuePut(gpsQueueHandle, &pvt, 0, 0);
+			queueMsg.type = MSG_GPS; //Informing Aggregator of msg type
+			queueMsg.data.GPS_msg = pvt;
+			xQueueSendToBack( xMessageQueue, &queueMsg, pdMS_TO_TICKS(5) );
 		}
 
 		osDelay(500);
@@ -237,7 +246,7 @@ void GpsTask(void *argument){
 
 void vSensorTask(void *pvParameters){
 
-sensor_msg_t sentData; //Data being sent to the queue
+Msg_t sentData; //Data being sent to the queue
 bme680_init(); //Initializing the sensor
 bme680_config(); //Configuring all registers for measurements and acquiring compensation values required
 
@@ -253,17 +262,144 @@ while(1){
 	bme680_hum_comp();
 
 	//Filling the struct which will contain the data being sent
-	sentData.humidity = (uint16_t)bme680_get_humid();
-	sentData.temperature = (int16_t)bme680_get_temp();
-	sentData.pressure = (uint32_t)bme680_get_press();
-	sentData.iaq = (uint16_t)bme68x_iaq(); //This will obtain scores based off compensated humidity and gas, and perform IAQ calc
+	sentData.type = MSG_SENSOR; //Telling the aggregator that this is from the sensor
+	sentData.data.sens_msg.humidity = (uint16_t)bme680_get_humid();
+	sentData.data.sens_msg.temperature = (int16_t)bme680_get_temp();
+	sentData.data.sens_msg.pressure = (uint32_t)bme680_get_press();
+	sentData.data.sens_msg.iaq = (uint16_t)bme68x_iaq(); //This will obtain scores based off compensated humidity and gas, and perform IAQ calc
 	//Send data to sensor queue, will wake aggregator task to create payload for radio
-	if(xQueueSendToBack( xSensorQueue, &sentData, pdMS_TO_TICKS(5) ) != pdPASS){
+	if(xQueueSendToBack( xMessageQueue, &sentData, pdMS_TO_TICKS(5) ) != pdPASS){
 		//Will add debugging
 	}
 }
   //In case we accidentally exit from task loop
 	vTaskDelete(NULL);
 
+}
+
+
+/*
+ * void vAggTask()
+ * This is the task that will take in the GPS and Sensor data and combine them
+ * into a LoRa compatible payload. This payload is then put into the msg queue
+ * which the radio will block on. This is a FSM which transitions based on what type
+ * of message it receives, when all new data is set it will then aggregate the data
+ *
+ * Jeremiah Apolista 05/04/2026
+ */
+void vAggTask(void *pvParameters){
+	//FreeRTOS Types / making buffer same as data in the queue
+	Msg_t module_msg;
+	//character arrays for data types
+	char tempBuffer[8];
+	char pressBuffer[10];
+	char humBuffer[4];
+	char iaqBuffer[6];
+	char payload[64];
+	uint8_t gpsBuff[12];
+
+	uint8_t sensor_flag = 0; //Software flag for data received from the sensor
+	uint8_t gps_flag = 0; //Software flag for data received from GPS
+	//Copying over types and data from the modules
+    //BME680 module
+	int16_t temp;   // °C * 100
+    uint32_t pressure;     // Pa
+    uint16_t humidity;     // %RH * 100
+    uint16_t iaq;          // 0–500
+
+    while(1){
+    	xQueueReceive(xMessageQueue, &module_msg, portMAX_DELAY);
+    	//Data has been successfully received from the queue,
+    	//Only implementing the sensor for right now, will implement with GPS after
+
+    	if(module_msg.type == MSG_SENSOR){
+			sensor_flag = 1;
+			//msg will be of the same struct as the structured data sent //into the queue, so we then copy over msg into local
+			//variables in the function
+			iaq = module_msg.data.sens_msg.iaq;
+			temp = module_msg.data.sens_msg.temperature;
+			humidity = module_msg.data.sens_msg.humidity;
+			pressure = module_msg.data.sens_msg.pressure;
+			}
+		else{
+			//right now the else case means it is from the gps
+			gps_flag = 1;
+			 // encode pvt to payload
+			gpsBuff[0] = (module_msg.data.GPS_msg.lat >> 24) & 0xFF;
+			gpsBuff[1] = (module_msg.data.GPS_msg.lat >> 16) & 0xFF;
+			gpsBuff[2] = (module_msg.data.GPS_msg.lat >> 8) & 0xFF;
+			gpsBuff[3] = (module_msg.data.GPS_msg.lat) & 0xFF;
+			gpsBuff[4] = (module_msg.data.GPS_msg.lon >> 24) & 0xFF;
+			gpsBuff[5] = (module_msg.data.GPS_msg.lon >> 16) & 0xFF;
+			gpsBuff[6] = (module_msg.data.GPS_msg.lon >> 8) & 0xFF;
+			gpsBuff[7] = (module_msg.data.GPS_msg.lon) & 0xFF;
+			gpsBuff[8] = module_msg.data.GPS_msg.gnssFixOK;
+			gpsBuff[9] = module_msg.data.GPS_msg.hour;
+			gpsBuff[10] = module_msg.data.GPS_msg.min;
+			gpsBuff[11] = module_msg.data.GPS_msg.sec;
+		}
+			//if we have received both messages we then proceed to formatting
+			//the data into a LoRa transmission compatible message
+			if((sensor_flag & gps_flag) == 1){
+				//Create the message, need to look more into this
+				//Converting temperature value into a string
+				temp_to_char(temp, tempBuffer, sizeof(tempBuffer));
+				//Converting pressure into a string
+				snprintf(pressBuffer, sizeof(pressBuffer), "%lu", pressure);
+				//Converting IAQ into a string
+				snprintf(iaqBuffer, sizeof(iaqBuffer), "%u", iaq);
+				//Converting humidity into a string
+				hum_to_char(humidity, humBuffer, sizeof(humBuffer));
+
+				//Appending all buffers with single snprint
+				snprintf(payload, sizeof(payload),
+						 "$%s,T=%s,H=%s,P=%s,IAQ=%s\n",
+						 gpsBuff,tempBuffer, humBuffer, pressBuffer, iaqBuffer);
+				xQueueSendToBack(xRadioQueue, &payload, pdMS_TO_TICKS(5));
+				//TODO: make this a struct which gives the length of the message so we know exactly how much to send
+
+			}
+
+
+    }
+
+}
+
+/*
+ * void temp_to_char()
+ * This function is utilized to convert the temperature data into ascii.
+ * It has two states for if we have negative temperature (which probably will never
+ * happen) and for positive temp. For example if sensor returns a value of 2345, this
+ * function will give a string of 23.45
+ *
+ * 05/04/2026 Jeremiah Apolista
+ */
+void temp_to_char(int16_t temperature, char *tempBuffer, uint8_t bufferSize){
+	int16_t val = 0;
+
+	if(temperature < 0){
+		//If our temperature is negative, make val = - to get absolute value
+		val = -temperature;
+		//String formatting to take the temperature value
+		//%02d is for the decimal value, 02 specifies the width and will pad
+		//with leading zeros when necessary
+		snprintf(tempBuffer, bufferSize, "-%d.%02d", val / 100, val % 100);
+
+	}
+	else{
+		snprintf(tempBuffer, bufferSize, "%d.%02d", temperature / 100, temperature % 100);
+	}
+}
+
+/*
+ * void hum_to_char()
+ * This function will perform the math to convert our value of percent humidity
+ * into ascii values. This is required as the sensor will send relative humitidty
+ * times 100. Utilize snprintf as our string formatter
+ *
+ * 05/04/2026 Jeremiah Apolista
+ */
+void hum_to_char(uint32_t humidity, char *humidityBuffer, uint8_t bufferSize){
+	snprintf(humidityBuffer, bufferSize, "%lu.%02lu", humidity / 100, humidity % 100);
 }
 /* USER CODE END Application */

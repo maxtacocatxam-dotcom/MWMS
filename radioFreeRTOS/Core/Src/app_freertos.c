@@ -132,7 +132,7 @@ void MX_FREERTOS_Init(void) {
 	radioQueueHandle = osMessageQueueNew (8, sizeof(radio_event_t), &radioQueue_attributes);
 	gpsQueueHandle = osMessageQueueNew (4, sizeof(GPS_PVT), &gpsQueue_attributes);
 	xMessageQueue = xQueueCreate(3, sizeof(Msg_t)); //Initializing sensor queue
-	xRadioQueue = xQueueCreate(3, 64);
+	xRadioQueue = xQueueCreate(3, 22);
     //xMsgQueue = xQueueCreate(2, 64); //Initializing msg queue with a length of 2 and width of 64 for payload
   /* USER CODE END RTOS_QUEUES */
 
@@ -296,12 +296,7 @@ void vAggTask(void *pvParameters){
 	//FreeRTOS Types / making buffer same as data in the queue
 	Msg_t module_msg;
 	//character arrays for data types
-	char tempBuffer[8];
-	char pressBuffer[10];
-	char humBuffer[4];
-	char iaqBuffer[6];
-	char payload[64];
-	uint8_t gpsBuff[12];
+	uint8_t payload[64];
 
 	uint8_t sensor_flag = 0; //Software flag for data received from the sensor
 	uint8_t gps_flag = 0; //Software flag for data received from GPS
@@ -323,12 +318,22 @@ void vAggTask(void *pvParameters){
     		len = snprintf(msg, sizeof(msg), "Received Sensor");
     		HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
     		sensor_flag = 1;
-			//msg will be of the same struct as the structured data sent //into the queue, so we then copy over msg into local
-			//variables in the function
 			iaq = module_msg.data.sens_msg.iaq;
 			temp = module_msg.data.sens_msg.temperature;
 			humidity = module_msg.data.sens_msg.humidity;
 			pressure = module_msg.data.sens_msg.pressure;
+			//Manually filling the payload
+			payload[12] = (uint8_t)(temp >> 8) & 0xFF; //uint for trans, rec will know int
+			payload[13] = (uint8_t)(temp) & 0xFF;
+			payload[14] = (uint8_t)(humidity >> 8) & 0xFF;
+			payload[15] = (uint8_t)(humidity) & 0xFF;
+			payload[16] = (uint8_t)(pressure >> 24) & 0xFF;
+			payload[17] = (uint8_t)(pressure >> 16) & 0xFF;
+			payload[18] = (uint8_t)(pressure >> 8) & 0xFF;
+			payload[19] = (uint8_t)(pressure) & 0xFF;
+			payload[20] = (uint8_t)(iaq >> 8) & 0xFF;
+			payload[21] = (uint8_t)(iaq) & 0xFF;
+
 			}
 		else{
 			//right now the else case means it is from the gps
@@ -336,18 +341,18 @@ void vAggTask(void *pvParameters){
 			HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
 			gps_flag = 1;
 			 // encode pvt to payload
-			gpsBuff[0] = (module_msg.data.GPS_msg.lat >> 24) & 0xFF;
-			gpsBuff[1] = (module_msg.data.GPS_msg.lat >> 16) & 0xFF;
-			gpsBuff[2] = (module_msg.data.GPS_msg.lat >> 8) & 0xFF;
-			gpsBuff[3] = (module_msg.data.GPS_msg.lat) & 0xFF;
-			gpsBuff[4] = (module_msg.data.GPS_msg.lon >> 24) & 0xFF;
-			gpsBuff[5] = (module_msg.data.GPS_msg.lon >> 16) & 0xFF;
-			gpsBuff[6] = (module_msg.data.GPS_msg.lon >> 8) & 0xFF;
-			gpsBuff[7] = (module_msg.data.GPS_msg.lon) & 0xFF;
-			gpsBuff[8] = module_msg.data.GPS_msg.gnssFixOK;
-			gpsBuff[9] = module_msg.data.GPS_msg.hour;
-			gpsBuff[10] = module_msg.data.GPS_msg.min;
-			gpsBuff[11] = module_msg.data.GPS_msg.sec;
+			payload[0] = (module_msg.data.GPS_msg.lat >> 24) & 0xFF;
+			payload[1] = (module_msg.data.GPS_msg.lat >> 16) & 0xFF;
+			payload[2] = (module_msg.data.GPS_msg.lat >> 8) & 0xFF;
+			payload[3] = (module_msg.data.GPS_msg.lat) & 0xFF;
+			payload[4] = (module_msg.data.GPS_msg.lon >> 24) & 0xFF;
+			payload[5] = (module_msg.data.GPS_msg.lon >> 16) & 0xFF;
+			payload[6] = (module_msg.data.GPS_msg.lon >> 8) & 0xFF;
+			payload[7] = (module_msg.data.GPS_msg.lon) & 0xFF;
+			payload[8] = module_msg.data.GPS_msg.gnssFixOK;
+			payload[9] = module_msg.data.GPS_msg.hour;
+			payload[10] = module_msg.data.GPS_msg.min;
+			payload[11] = module_msg.data.GPS_msg.sec;
 		}
 			//if we have received both messages we then proceed to formatting
 			//the data into a LoRa transmission compatible message
@@ -356,20 +361,6 @@ void vAggTask(void *pvParameters){
 				HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
 				gps_flag = 0;
 				sensor_flag = 0; //Reset the flags
-				//Create the message, need to look more into this
-				//Converting temperature value into a string
-				temp_to_char(temp, tempBuffer, sizeof(tempBuffer));
-				//Converting pressure into a string
-				snprintf(pressBuffer, sizeof(pressBuffer), "%lu", pressure);
-				//Converting IAQ into a string
-				snprintf(iaqBuffer, sizeof(iaqBuffer), "%u", iaq);
-				//Converting humidity into a string
-				hum_to_char(humidity, humBuffer, sizeof(humBuffer));
-
-				//Appending all buffers with single snprint
-				snprintf(payload, sizeof(payload),
-						 "$T=%s,H=%s,P=%s,IAQ=%s\n"
-						,tempBuffer, humBuffer, pressBuffer, iaqBuffer);
 				len = snprintf(msg, sizeof(msg), "Sending payload to queue");
 				HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
 				xQueueSendToBack(xRadioQueue, payload, pdMS_TO_TICKS(5));

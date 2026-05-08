@@ -15,16 +15,17 @@
 #include "queue.h"
 
 
-uint8_t bme680_soft_reset(void);
-uint8_t bme_read_calibration(void);
+//Functions needed to be accessed by the task
 uint8_t bme680_init(void);
 void bme680_config(void);
-void bme680_start_meas(void);
-void bme680_read_raw(void);
-void bme680_data_comp(void);
+void bme680_temp_comp(void);
+void bme680_press_comp(void);
+void bme680_hum_comp(void);
+int32_t bme680_get_humid();
+int32_t bme680_get_temp();
+int64_t bme680_get_press();
 void bme68x_GetGasReference(void);
 int32_t bme68x_iaq(void);
-void vSensorTask(void *pvParameters);
 
 //FreeRTOS Variables
 extern QueueHandle_t xSensorQueue;

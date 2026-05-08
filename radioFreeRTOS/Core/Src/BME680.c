@@ -19,12 +19,17 @@
 #define BME680_CHIP_ID 0x61
 
 //Private Function Declarations
+uint8_t bme680_soft_reset(void);
+uint8_t bme_read_calibration(void);
 void bme680_temp_comp(void);
 void bme680_hum_comp(void);
 void bme680_press_comp(void);
 void bme680_gas_comp(void);
 int8_t bme68x_GetGasScore(void);
 int8_t bme68x_GetHumidityScore(void);
+void bme680_start_meas(void);
+void bme680_read_raw(void);
+void bme680_data_comp(void);
 
 const uint32_t const_array1_int[16] = {2147483647, 2147483647, 2147483647, 2147483647,
 									  2147483647, 2126008810, 2147483647, 2130303777,
@@ -210,7 +215,7 @@ void bme680_config(void){
 	 * res_heat_val is the heater resistance correction factor stored in 0x00
 	 * Credit to the BME680 Datasheet
 	 */
-	int32_t amb_temp = 25;
+	int32_t amb_temp = 20;
 	int32_t target_temp = 300;
 	int32_t var1 = (((int32_t)amb_temp * calib.par_gh3) / 10) << 8;
 	int32_t var2 = (calib.par_gh1 + 784) * (((((calib.par_gh2 + 154009) * target_temp * 5) / 100)
@@ -423,7 +428,6 @@ void bme680_data_comp(void){
 /*
  This substantial portion of IAQ calculation is shared with the written permission from the author David Bird.
  This substantial portion of IAQ calculation, the ideas and concepts is Copyright (c) David Bird 2018. All rights to this substantial portion are reserved.
-
 */
 
 /* IAQ functions */
@@ -488,37 +492,5 @@ int32_t bme68x_iaq(void) {
 	return air_quality_score;
 
 }
-/* The following code refers to the task creation of our bme680 */
 
-void vSensorTask(void *pvParameters){
-
-	sensor_msg_t sentData; //Data being sent to the queue
-	bme680_init(); //Initializing the sensor
-	bme680_config(); //Configuring all registers for measurements and acquiring compensation values required
-
-	while(1){
-		vTaskDelay(pdMS_TO_TICKS(1000)); //Periodic Task
-		//Gas reference will run 10 forced measurements to acquire average gas measurement and heat the hot plate
-		//This will take app. 1.5 seconds, but it uses vTaskDelay to give up the CPU in the meantime
-		bme68x_GetGasReference(); //Gas reference will assign all raw data and performs the compensation math for the gas measurement
-
-		//Performing the rest of the compensations, all will change the compensated data struct private to this file
-		bme680_temp_comp();
-		bme680_press_comp();
-		bme680_hum_comp();
-
-		//Filling the struct which will contain the data being sent
-		sentData.humidity = (uint16_t)bme680_get_humid();
-		sentData.temperature = (int16_t)bme680_get_temp();
-		sentData.pressure = (uint32_t)bme680_get_press();
-		sentData.iaq = (uint16_t)bme68x_iaq(); //This will obtain scores based off compensated humidity and gas, and perform IAQ calc
-		//Send data to sensor queue, will wake aggregator task to create payload for radio
-		if(xQueueSendToBack( xSensorQueue, &sentData, pdMS_TO_TICKS(5) ) != pdPASS){
-			//Will add debugging
-		}
-	}
-	  //In case we accidentally exit from task loop
-		vTaskDelete(NULL);
-
-}
 

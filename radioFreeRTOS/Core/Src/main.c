@@ -26,6 +26,7 @@
 #include "gpio.h"
 #include "app_radio.h"
 #include "app_GPS.h"
+#include "BME680.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */

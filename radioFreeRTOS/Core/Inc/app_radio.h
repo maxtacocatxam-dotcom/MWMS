@@ -11,6 +11,7 @@
 #include "cmsis_os2.h"
 #include "freeRTOS.h"
 #include "radio_driver.h"
+#include "queue.h"
 
 typedef enum{
 	EVENT_TX_DONE,
@@ -19,7 +20,9 @@ typedef enum{
 } radio_event_t;
 
 extern PacketParams_t packetParams;
+extern QueueHandle_t xRadioQueue;
 
+void RadioTask(void *argument);
 void radioTx(uint8_t *payload, uint8_t len);
 void radioInit(void);
 

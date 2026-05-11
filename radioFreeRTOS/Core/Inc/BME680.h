@@ -26,7 +26,7 @@ int32_t bme680_get_temp();
 int64_t bme680_get_press();
 void bme68x_GetGasReference(void);
 int32_t bme68x_iaq(void);
-
+void vSensorTask(void *pvParameters);
 //FreeRTOS Variables
 extern QueueHandle_t xSensorQueue;
 

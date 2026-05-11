@@ -6,10 +6,14 @@
  */
 #include <app_GPS.h>
 #include <string.h>
+#include "FreeRTOS.h"
 #include "stm32wlxx_hal.h"
 #include "u-blox_config_keys.h"
 #include "usart.h"
 #include "cmsis_os2.h"
+#include "queue.h"
+#include "message.h"
+#include "app_aggregator.h"
 #include <stdio.h>
 #include <stdbool.h>
 
@@ -126,48 +130,52 @@ GPS_Status gps_send(uint8_t msg_class, uint8_t msg_id,
 
 /**
  * gps_ack_wait: Waits for the GPS to acknowledge the command sent
- *
+ * msg_class: Choose from message classes (cfg, nav, etc.)
+ * msg_id: ID within message class (cfg NMEA, nav PVT, etc)
+ * timeout_ms: timeout in milliseconds
  */
 
 GPS_Status gps_ack_wait(uint8_t msg_class, uint8_t msg_id, uint32_t timeout_ms){
-	//debug
+	//debug, prints how long the ack waits for
 	char dbg[32];
 	int waiting = gps_uart_available();
 	snprintf(dbg, sizeof(dbg), "WAITING: %d\r\n", waiting);
 	HAL_UART_Transmit(&huart2, (uint8_t*)dbg, strlen(dbg), 100);
 
+	//record current time to check for timeout
 	uint32_t start = HAL_GetTick();
 	uint8_t state = 0;
 	uint8_t ack_class = 0;
 
-	while ((HAL_GetTick() - start) < timeout_ms)
+	while ((HAL_GetTick() - start) < timeout_ms) //While the current time is less than timeout period
 	{
-		if (!gps_uart_available()) continue;
+		if (!gps_uart_available()) continue; //read the UART
 		uint8_t byte = (uint8_t)gps_uart_read();
 
-		char hex[12];
+		char hex[12]; //spitting out what is being recieved
 		snprintf(hex, sizeof(hex), "%02X ", byte);
 		HAL_UART_Transmit(&huart2, (uint8_t*)hex, strlen(hex), 10);
 
+		//magic number checking to read the message back
 		switch(state)
 		{
 		case 0:
-			if (byte == 0xB5) state=1;
+			if (byte == 0xB5) state=1; //preamble 1
 			break;
 
 		case 1:
-			if (byte == 0x62) state=2;
+			if (byte == 0x62) state=2; //preamble 2
 			else state = 0;
 			break;
 
 		case 2:
-			if (byte == 0x05) state=3;
+			if (byte == 0x05) state=3; //ack class (0x05)
 			else state = 0;
 			break;
 
 		case 3:
-			if (byte == 0x00 || byte == 0x01){
-				ack_class = byte;
+			if (byte == 0x00 || byte == 0x01){ // 0x01 ACK 0x00 NACK, message id
+				ack_class = byte; // ack class is either ack or nack
 				state = 4;
 			}
 			else{
@@ -176,22 +184,22 @@ GPS_Status gps_ack_wait(uint8_t msg_class, uint8_t msg_id, uint32_t timeout_ms){
 			break;
 
 		case 4:
-			if (byte == 0x02) state=5;
+			if (byte == 0x02) state=5; // parsing through the length
 			else state = 0;
 			break;
 
 		case 5:
-			if (byte == 0x00) state=6;
+			if (byte == 0x00) state=6; // should only be 2 bytes long for message and id
 			else state = 0;
 			break;
 
 		case 6:
-			if (byte == msg_class) state=7;
+			if (byte == msg_class) state=7; // check that returned ack is for the chosen class
 			else state = 0;
 			break;
 
 		case 7:
-			if (byte == msg_id) {
+			if (byte == msg_id) { // and ID
 				//SUCCESS: Message found
 				return (ack_class == 0x01) ? GPS_OK : GPS_ERROR;
 			}else {
@@ -204,12 +212,14 @@ GPS_Status gps_ack_wait(uint8_t msg_class, uint8_t msg_id, uint32_t timeout_ms){
 			break;
 		}
 	}
+	//debug
 	HAL_UART_Transmit(&huart2, (uint8_t*)"ACK TIMEOUT\r\n", 13, 100);
 	return GPS_ERROR; //timeout
 }
 
 /**
  * gps_call_location: calls for time, latitude, longitude, and status of fix
+ * *out: memory location holding the gps output
  */
 GPS_Status gps_call_location(GPS_PVT *out){
 	//read the GPS UART to check availability
@@ -232,26 +242,27 @@ GPS_Status gps_call_location(GPS_PVT *out){
 		}
 		uint8_t b = (uint8_t)gps_uart_read(); //similar to the ack wait
 
+		// state machine to check if the returned message is the one we are looking for
 		switch (state) {
-		case 0: if (b == 0xb5) {frame[idx++] = b; state = 1;} break;
-		case 1: if (b == 0x62) {frame[idx++] = b; state = 2;} else {idx = 0; state = 0;} break;
-		case 2: if (b == 0x01) {frame[idx++] = b; state = 3;} else {idx = 0; state = 0;} break;
-		case 3: if (b == 0x07) {frame[idx++] = b; state = 4;} else {idx = 0; state = 0;} break;
+		case 0: if (b == 0xb5) {frame[idx++] = b; state = 1;} break; //preamble 1
+		case 1: if (b == 0x62) {frame[idx++] = b; state = 2;} else {idx = 0; state = 0;} break; //preamble 2
+		case 2: if (b == 0x01) {frame[idx++] = b; state = 3;} else {idx = 0; state = 0;} break; //class
+		case 3: if (b == 0x07) {frame[idx++] = b; state = 4;} else {idx = 0; state = 0;} break; //ID
 		case 4:
 			frame[idx++] = b; //add bytes to the frame until 100 bytes long
 			if (idx == 100) { //100 bytes = length of PVT message, so start parsing after all are collected
 				const uint8_t *p = &frame[6]; //payload start
-				out->year = rd_u2(&p[4]);
-				out->month = p[6];
-				out->day = p[7];
-				out->hour = p[8];
-				out->min = p[9];
-				out->sec = p[10];
-				out->validDate = (p[11]>>0) & 1;
-				out->validTime = (p[11]>>1) & 1;
-				out->gnssFixOK = (p[21]>>0) & 1;
-				out->lat = rd_i4(&p[28]);
-				out->lon = rd_i4(&p[24]);
+				out->year = rd_u2(&p[4]); //year position, convert little endian unsigned
+				out->month = p[6]; //month
+				out->day = p[7]; //day
+				out->hour = p[8]; //hour
+				out->min = p[9]; //minute
+				out->sec = p[10]; //second
+				out->validDate = (p[11]>>0) & 1; //valid date check
+				out->validTime = (p[11]>>1) & 1; //valid time check
+				out->gnssFixOK = (p[21]>>0) & 1; //flag to check if the fix is in
+				out->lat = rd_i4(&p[28]); //latitude, convert little endian integers
+				out->lon = rd_i4(&p[24]); //longitude
 				return GPS_OK;
 			}
 			break;
@@ -279,6 +290,7 @@ GPS_Status gps_config_nmea(uint8_t state) {
 	valset_append_bool(payload, &offset, UBLOX_CFG_UART1OUTPROT_UBX, 0x01);
 	valset_append_bool(payload, &offset, UBLOX_CFG_UART1OUTPROT_NMEA, state);
 
+	//dbug to check what exact payload being sent is
 	HAL_UART_Transmit(&huart2, (uint8_t*)"PAYLOAD: ", 9, 100);
 	    for (uint16_t i = 0; i < offset; i++) {
 	        char hex[6];
@@ -302,7 +314,7 @@ GPS_Status gps_config_nmea(uint8_t state) {
 //		uint8_t b = (uint8_t)gps_uart_read();
 //		HAL_UART_Transmit(&huart2, &b, 1, 100);
 //	}
-
+	//make sure the GPS acks the cfg data
 	GPS_Status result = gps_ack_wait(GPS_CLASS_CFG, GPS_CFG_VALSET, 2000);
 	if (result == GPS_OK) {
 		HAL_UART_Transmit(&huart2, (uint8_t*)"ACK WIN\r\n", 9, 100);
@@ -313,7 +325,7 @@ GPS_Status gps_config_nmea(uint8_t state) {
 }
 /*
  * gps_config_GNSS: configure which GPS constellation to pay attention to,
- * current settings: BeiDou ONLY
+ * current settings: BDS, galileo, and GPS
  */
 GPS_Status gps_config_GNSS(void) {
 	struct {uint32_t key; uint8_t val; const char *name;
@@ -324,7 +336,7 @@ GPS_Status gps_config_GNSS(void) {
 			{ UBLOX_CFG_SIGNAL_QZSS_ENA, 0x00, "QZSS" },
 			{UBLOX_CFG_SIGNAL_SBAS_ENA, 0x00, "SBAS" },
 			{ UBLOX_CFG_SIGNAL_GPS_ENA, 0x01, "GPS" }
-	};
+	}; //0x01 is on, 0x00 is off, struct has a key, value, and name for each GPS constellation
 
 
 	for (int i = 0; i < 6; i++) {
@@ -338,16 +350,16 @@ GPS_Status gps_config_GNSS(void) {
 
 		while (gps_uart_available())
 			gps_uart_read(); //flush before sending
-
+		//debug to check payload
 		HAL_UART_Transmit(&huart2, (uint8_t*) keys[i].name, strlen(keys[i].name), 100);
 		HAL_UART_Transmit(&huart2, (uint8_t*) ": ", 2, 100);
-
+		//send configuration data
 		if (gps_send(GPS_CLASS_CFG, GPS_CFG_VALSET, payload, offset)
 				!= GPS_OK) {
 			HAL_UART_Transmit(&huart2, (uint8_t*) "SEND FAILED\r\n", 13, 100);
 			return GPS_ERROR;
 		}
-
+		//debug make sure get ack from gps
 		GPS_Status result = gps_ack_wait(GPS_CLASS_CFG, GPS_CFG_VALSET, 2000);
 		if (result == GPS_OK) {
 			HAL_UART_Transmit(&huart2, (uint8_t*) "ACK WIN\r\n", 9, 100);
@@ -375,7 +387,7 @@ GPS_Status gps_init(void){
 	return GPS_OK;
 }
 
-/**valset_append: allows the use of the config key header file.
+/**valset_append_bool: allows the use of the config key header file.
  * definitions in the header file are big endian, and must be reversed and parsed
  * to be sent to the reciever
  * buf: payload destination
@@ -394,6 +406,48 @@ void valset_append_bool(uint8_t *buf, uint16_t *offset,
     *offset += 5;
 }
 
+/*
+ * GpsTask:
+ */
+void GpsTask(void *argument){
+	GPS_PVT pvt;
+	Msg_t queueMsg;
+	char msg[48];
+	int len;
+	for(;;) {
+		osDelay(5000);
+		len = snprintf(msg, sizeof(msg), "loop tick\r\n");
+		HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
+
+		GPS_Status ret = gps_call_location(&pvt);
+
+		len = snprintf(msg, sizeof(msg), "ret=%d fix=%d\r\n", ret, pvt.gnssFixOK);
+		HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
+
+		if (ret == GPS_OK ){ //Excluded && pvt.gnssFixOK for debugging purposes
+			queueMsg.type = MSG_GPS; //Informing Aggregator of msg type
+			queueMsg.data.GPS_msg = pvt;
+			xQueueSendToBack( xMessageQueue, &queueMsg, pdMS_TO_TICKS(5) );
+		}
+
+
+	}
+
+//	GPS_PVT pvt;
+//	    GPS_Status ret;  // or whatever your return type is
+//	    char msg[48];
+//	    int len;
+//	    for(;;) {
+//	        ret = gps_call_location(&pvt);
+//	        if (ret == GPS_OK && pvt.gnssFixOK){
+//	            osMessageQueuePut(gpsQueueHandle, &pvt, 0, 0);
+//	        } else {
+//	            len = snprintf(msg, sizeof(msg), "ret=%d fix=%d\r\n", ret, pvt.gnssFixOK);
+//	            HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
+//	        }
+//	        osDelay(500);
+//	    }
+}
 
 
 

@@ -12,6 +12,10 @@
 #include "FreeRTOSConfig.h"
 #include "task.h"
 #include "queue.h"
+#include "message.h"
+#include "usart.h"
+#include "app_aggregator.h"
+#include <stdio.h>
 
 
 #define BME680_ADD 0x76
@@ -493,4 +497,42 @@ int32_t bme68x_iaq(void) {
 
 }
 
+/* The following code refers to the task creation of our bme680 */
+
+void vSensorTask(void *pvParameters){
+
+Msg_t sentData; //Data being sent to the queue
+bme680_init(); //Initializing the sensor
+bme680_config(); //Configuring all registers for measurements and acquiring compensation values required
+char msg[48];
+int len;
+while(1){
+	vTaskDelay(pdMS_TO_TICKS(5000)); //Periodic Task
+	//Gas reference will run 10 forced measurements to acquire average gas measurement and heat the hot plate
+	//This will take app. 1.5 seconds, but it uses vTaskDelay to give up the CPU in the meantime
+	bme68x_GetGasReference(); //Gas reference will assign all raw data and performs the compensation math for the gas measurement
+
+	//Performing the rest of the compensations, all will change the compensated data struct private to this file
+	bme680_temp_comp();
+	bme680_press_comp();
+	bme680_hum_comp();
+
+	//Filling the struct which will contain the data being sent
+	sentData.type = MSG_SENSOR; //Telling the aggregator that this is from the sensor
+	sentData.data.sens_msg.humidity = (uint16_t)bme680_get_humid();
+	sentData.data.sens_msg.temperature = (int16_t)bme680_get_temp();
+	sentData.data.sens_msg.pressure = (uint32_t)bme680_get_press();
+	sentData.data.sens_msg.iaq = (uint16_t)bme68x_iaq(); //This will obtain scores based off compensated humidity and gas, and perform IAQ calc
+	//TODO: Fix the IAQ algorithm, also add dsp for the signals very noisy
+	len = snprintf(msg, sizeof(msg), "Sending Sensor to queue");
+	HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
+	//Send data to sensor queue, will wake aggregator task to create payload for radio
+	if(xQueueSendToBack( xMessageQueue, &sentData, pdMS_TO_TICKS(5) ) != pdPASS){
+		//Will add debugging
+	}
+}
+  //In case we accidentally exit from task loop
+	vTaskDelete(NULL);
+
+}
 

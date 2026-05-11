@@ -22,9 +22,9 @@
 #define LORA_SYMBOL_TIMEOUT                         5         /* Symbols */
 
 const RadioLoRaBandwidths_t Bandwidths[] = { LORA_BW_125, LORA_BW_250, LORA_BW_500 };
-
 void RadioOnDioIrq(RadioIrqMasks_t radioIrq);
 
+QueueHandle_t xRadioQueue;
 PacketParams_t packetParams;
 /* Definitions for radioQueue */
 extern osMessageQueueId_t radioQueueHandle;
@@ -135,5 +135,34 @@ void radioTx(uint8_t *payload, uint8_t len)
 	  SUBGRF_SendPayload(payload, len, 0);
 }
 
+/*
+ * RadioTask:
+ */
+void RadioTask(void *argument){
+	char payload[64];
+	radio_event_t event;
+	char msg[48];
+	int len;
+	for(;;){
+		xQueueReceive(xRadioQueue, payload, portMAX_DELAY);
+		len = snprintf(msg, sizeof(msg), "payload received");
+		HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
+		len = snprintf(msg, sizeof(msg), "Transmitting Payload");
+		HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
+		radioTx((uint8_t *)"HELLO", 5);
+		//wait for irq results
+		if (xQueueReceive(radioQueueHandle, &event, pdMS_TO_TICKS(2000))) {
+			if (event != EVENT_TX_DONE) {
+				len = snprintf(msg, sizeof(msg), "No Bueno");
+				HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
+				radioTx((uint8_t *)payload, sizeof(payload));
+			}
+			else{
+				len = snprintf(msg, sizeof(msg), "Transmit Complete");
+				HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
+			}
+		}
+	}
+}
 
 

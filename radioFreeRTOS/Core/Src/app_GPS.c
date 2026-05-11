@@ -6,10 +6,14 @@
  */
 #include <app_GPS.h>
 #include <string.h>
+#include "FreeRTOS.h"
 #include "stm32wlxx_hal.h"
 #include "u-blox_config_keys.h"
 #include "usart.h"
 #include "cmsis_os2.h"
+#include "queue.h"
+#include "message.h"
+#include "app_aggregator.h"
 #include <stdio.h>
 #include <stdbool.h>
 
@@ -402,6 +406,48 @@ void valset_append_bool(uint8_t *buf, uint16_t *offset,
     *offset += 5;
 }
 
+/*
+ * GpsTask:
+ */
+void GpsTask(void *argument){
+	GPS_PVT pvt;
+	Msg_t queueMsg;
+	char msg[48];
+	int len;
+	for(;;) {
+		osDelay(5000);
+		len = snprintf(msg, sizeof(msg), "loop tick\r\n");
+		HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
+
+		GPS_Status ret = gps_call_location(&pvt);
+
+		len = snprintf(msg, sizeof(msg), "ret=%d fix=%d\r\n", ret, pvt.gnssFixOK);
+		HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
+
+		if (ret == GPS_OK ){ //Excluded && pvt.gnssFixOK for debugging purposes
+			queueMsg.type = MSG_GPS; //Informing Aggregator of msg type
+			queueMsg.data.GPS_msg = pvt;
+			xQueueSendToBack( xMessageQueue, &queueMsg, pdMS_TO_TICKS(5) );
+		}
+
+
+	}
+
+//	GPS_PVT pvt;
+//	    GPS_Status ret;  // or whatever your return type is
+//	    char msg[48];
+//	    int len;
+//	    for(;;) {
+//	        ret = gps_call_location(&pvt);
+//	        if (ret == GPS_OK && pvt.gnssFixOK){
+//	            osMessageQueuePut(gpsQueueHandle, &pvt, 0, 0);
+//	        } else {
+//	            len = snprintf(msg, sizeof(msg), "ret=%d fix=%d\r\n", ret, pvt.gnssFixOK);
+//	            HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
+//	        }
+//	        osDelay(500);
+//	    }
+}
 
 
 

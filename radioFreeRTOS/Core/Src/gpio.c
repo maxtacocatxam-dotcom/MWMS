@@ -20,6 +20,7 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "gpio.h"
+#include "stm32wlxx_hal.h"
 
 /* USER CODE BEGIN 0 */
 
@@ -40,9 +41,16 @@ void MX_GPIO_Init(void)
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
+  /* USER CODE BEGIN 2 */
+  	GPIO_InitTypeDef GPIO_InitStruct = {0};
+  	GPIO_InitStruct.Pin = GPIO_PIN_5;
+    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+    GPIO_InitStruct.Pull = GPIO_PULLUP;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+
+    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+  /* USER CODE END 2 */
 
 }
 
-/* USER CODE BEGIN 2 */
 
-/* USER CODE END 2 */

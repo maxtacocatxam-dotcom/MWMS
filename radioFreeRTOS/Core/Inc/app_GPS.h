@@ -9,6 +9,10 @@
 #define INC_APP_GPS_H_
 #include <stdbool.h>
 #include <stdint.h>
+#include "FreeRTOS.h"
+#include "task.h"
+
+extern TaskHandle_t GPSTaskHandle;
 
 typedef enum {
 	GPS_OK = 0,
@@ -27,7 +31,7 @@ typedef struct {
     int32_t  lon;   // deg * 1e-7
 } GPS_PVT;
 
-void GPSTask(void *argument);
+void GpsTask(void *pvParameters);
 
 GPS_Status gps_init(void);
 

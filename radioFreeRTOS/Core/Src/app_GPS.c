@@ -16,6 +16,7 @@
 #include "app_aggregator.h"
 #include <stdio.h>
 #include <stdbool.h>
+#include "app_scheduler.h"
 
 /**
  * TO-DO List:
@@ -23,6 +24,9 @@
  * Set up power settings - need to understand how that works
  * Poll location and parse data - NAV-PVT
  */
+
+//GPS Task Handle
+TaskHandle_t GPSTaskHandle;
 
 //MAX-M10S configuration definitions
 #define GPS_MAX_PAYLOAD 256
@@ -409,13 +413,13 @@ void valset_append_bool(uint8_t *buf, uint16_t *offset,
 /*
  * GpsTask:
  */
-void GpsTask(void *argument){
+void GpsTask(void *pvParameters){
 	GPS_PVT pvt;
 	Msg_t queueMsg;
 	char msg[48];
 	int len;
 	for(;;) {
-		osDelay(5000);
+		ulTaskNotifyTake(pdTRUE, portMAX_DELAY); //Wait for signal from scheduler
 		len = snprintf(msg, sizeof(msg), "loop tick\r\n");
 		HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
 

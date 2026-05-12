@@ -8,10 +8,9 @@
 #ifndef INC_APP_AGGREGATOR_H_
 #define INC_APP_AGGREGATOR_H_
 
-
-
-#endif /* INC_APP_AGGREGATOR_H_ */
-
 extern QueueHandle_t xMessageQueue;
 
 void vAggTask(void *pvParameters);
+
+#endif /* INC_APP_AGGREGATOR_H_ */
+

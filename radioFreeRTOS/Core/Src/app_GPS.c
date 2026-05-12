@@ -24,6 +24,9 @@
  * Poll location and parse data - NAV-PVT
  */
 
+//GPS Task Handle
+TaskHandle_t GPSTaskHandle;
+
 //MAX-M10S configuration definitions
 #define GPS_MAX_PAYLOAD 256
 #define GPS_HEADER_LEN 6 //preamble(2) + class(1) + id(1) + length(2)

@@ -143,7 +143,7 @@ void MX_FREERTOS_Init(void) {
 				SENSOR_TASK_STACK,
 				NULL,
 				SENSOR_TASK_PRIO,
-				NULL);
+				&SensorTaskHandle);
   xTaskCreate( vAggTask,
 		  	   "Aggregator Task",
 			   AGG_TASK_STACK,
@@ -155,7 +155,7 @@ void MX_FREERTOS_Init(void) {
 			   GPS_TASK_STACK,
 			   NULL,
 			   GPS_TASK_PRIO,
-			   NULL);
+			   &GPSTaskHandle);
 	radioTaskHandle = osThreadNew(RadioTask, NULL, &radioTask_attributes);
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */

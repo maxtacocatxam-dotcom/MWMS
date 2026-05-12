@@ -22,6 +22,8 @@
 #define BME680_OK 0
 #define BME680_CHIP_ID 0x61
 
+TaskHandle_t SensorTaskHandle;
+
 //Private Function Declarations
 uint8_t bme680_soft_reset(void);
 uint8_t bme_read_calibration(void);

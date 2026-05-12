@@ -14,6 +14,8 @@
 #include "task.h"
 #include "queue.h"
 
+extern TaskHandle_t SensorTaskHandle;
+
 
 //Functions needed to be accessed by the task
 uint8_t bme680_init(void);

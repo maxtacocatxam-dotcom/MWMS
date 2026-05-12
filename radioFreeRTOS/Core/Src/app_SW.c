@@ -63,9 +63,7 @@ void vSWTask(void *pvParameters) {
     }
 }
 /********************************************************************
-* swScan() - Scans the SW2 and SW3 on the FRDM-MCXN947 board and
-*            returns a switch code. Assumes switches are active low.
-*           - Only allows one switch to be pressed at a time.
+* swScan() - Scans the PB5. Assumes switch is active low.
 * (Private)
 ********************************************************************/
 static SW_T swScan(void) {

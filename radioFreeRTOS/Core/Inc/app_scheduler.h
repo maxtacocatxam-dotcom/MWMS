@@ -13,6 +13,7 @@
 #include "task.h"
 
 extern TaskHandle_t ControllerTaskHandle;
+void vControllerTask(void *pvParameters);
 
 
 #endif /* INC_APP_SCHEDULER_H_ */

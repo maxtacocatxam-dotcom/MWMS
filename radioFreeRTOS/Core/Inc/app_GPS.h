@@ -31,7 +31,7 @@ typedef struct {
     int32_t  lon;   // deg * 1e-7
 } GPS_PVT;
 
-void GPSTask(void *argument);
+void GpsTask(void *pvParameters);
 
 GPS_Status gps_init(void);
 

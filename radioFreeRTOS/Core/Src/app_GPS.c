@@ -412,7 +412,7 @@ void valset_append_bool(uint8_t *buf, uint16_t *offset,
 /*
  * GpsTask:
  */
-void GpsTask(void *argument){
+void GpsTask(void *pvParameters){
 	GPS_PVT pvt;
 	Msg_t queueMsg;
 	char msg[48];

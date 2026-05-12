@@ -37,6 +37,8 @@
 #include "message.h"
 #include "app_radio.h"
 #include "app_aggregator.h"
+#include "app_scheduler.h"
+#include "app_SW.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -93,10 +95,6 @@ const osThreadAttr_t gpsTask_attributes = {
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
-void GpsTask(void *argument);
-void RadioTask(void *argument);
-void vSensorTask(void *pvParameters);
-void vAggTask(void *pvParameters);
 /* USER CODE END FunctionPrototypes */
 
 void StartDefaultTask(void *argument);
@@ -156,7 +154,25 @@ void MX_FREERTOS_Init(void) {
 			   NULL,
 			   GPS_TASK_PRIO,
 			   &GPSTaskHandle);
-	radioTaskHandle = osThreadNew(RadioTask, NULL, &radioTask_attributes);
+  xTaskCreate( vControllerTask,
+  		  	   "Controller Task",
+			   CONTROLLER_TASK_STACK,
+  			   NULL,
+  			   CONTROLLER_TASK_PRIO,
+  			   &ControllerTaskHandle);
+  xTaskCreate( vSWTask,
+    		   "Switch Task",
+  			   SW_TASK_STACK,
+			   NULL,
+			   SW_TASK_PRIO,
+			   NULL);
+  xTaskCreate( RadioTask,
+     		   "Radio Task",
+   			   RADIO_TASK_STACK,
+ 			   NULL,
+ 			   RADIO_TASK_PRIO,
+ 			   NULL);
+
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
   /* USER CODE END RTOS_THREADS */

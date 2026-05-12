@@ -16,6 +16,7 @@
 #include "usart.h"
 #include "app_aggregator.h"
 #include <stdio.h>
+#include "app_scheduler.h"
 
 
 #define BME680_ADD 0x76

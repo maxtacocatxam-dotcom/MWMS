@@ -87,7 +87,7 @@ void vAggTask(void *pvParameters){
     	//Only implementing the sensor for right now, will implement with GPS after
 
     	if(module_msg.type == MSG_SENSOR){
-    		len = snprintf(msg, sizeof(msg), "Received Sensor");
+    		len = snprintf(msg, sizeof(msg), "Received Sensor\r\n");
     		HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
     		sensor_flag = 1;
 			iaq = module_msg.data.sens_msg.iaq;
@@ -109,7 +109,7 @@ void vAggTask(void *pvParameters){
 			}
 		else{
 			//right now the else case means it is from the gps
-			len = snprintf(msg, sizeof(msg), "Received GPS");
+			len = snprintf(msg, sizeof(msg), "Received GPS\r\n");
 			HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
 			gps_flag = 1;
 			 // encode pvt to payload
@@ -129,12 +129,19 @@ void vAggTask(void *pvParameters){
 			//if we have received both messages we then proceed to formatting
 			//the data into a LoRa transmission compatible message
 			if(sensor_flag && gps_flag){
-				len = snprintf(msg, sizeof(msg), "Aggregating Data");
-				HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
+				HAL_UART_Transmit(&huart2, (uint8_t*)"PAYLOAD: ", 9, 100);
+				    for (uint16_t i = 0; i < 21; i++) {
+				        char hex[6];
+				        snprintf(hex, sizeof(hex), "%02X ", payload[i]);
+				        HAL_UART_Transmit(&huart2, (uint8_t*)hex, strlen(hex), 10);
+				    }
+				HAL_UART_Transmit(&huart2, (uint8_t*)"\r\n", 2, 100);
+				//len = snprintf(msg, sizeof(msg), "Aggregating Data");
+				//HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
 				gps_flag = 0;
 				sensor_flag = 0; //Reset the flags
-				len = snprintf(msg, sizeof(msg), "Sending payload to queue");
-				HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
+				//len = snprintf(msg, sizeof(msg), "Sending payload to queue");
+				//HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
 				xQueueSendToBack(xRadioQueue, payload, pdMS_TO_TICKS(5));
 				//TODO: make this a struct which gives the length of the message so we know exactly how much to send
 

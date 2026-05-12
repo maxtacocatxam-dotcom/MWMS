@@ -145,20 +145,27 @@ void RadioTask(void *argument){
 	int len;
 	for(;;){
 		xQueueReceive(xRadioQueue, payload, portMAX_DELAY);
-		len = snprintf(msg, sizeof(msg), "payload received");
+		len = snprintf(msg, sizeof(msg), "payload received\r\n");
 		HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
-		len = snprintf(msg, sizeof(msg), "Transmitting Payload");
+		HAL_UART_Transmit(&huart2, (uint8_t*)"PAYLOAD: ", 9, 100);
+		    for (uint16_t i = 0; i < 21; i++) {
+		        char hex[6];
+		        snprintf(hex, sizeof(hex), "%02X ", payload[i]);
+		        HAL_UART_Transmit(&huart2, (uint8_t*)hex, strlen(hex), 10);
+		    }
+		HAL_UART_Transmit(&huart2, (uint8_t*)"\r\n",2,100);
+		len = snprintf(msg, sizeof(msg), "Transmitting Payload\r\n");
 		HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
-		radioTx((uint8_t *)"HELLO", 5);
+		radioTx((uint8_t*)payload, sizeof(payload));
 		//wait for irq results
 		if (xQueueReceive(radioQueueHandle, &event, pdMS_TO_TICKS(2000))) {
 			if (event != EVENT_TX_DONE) {
-				len = snprintf(msg, sizeof(msg), "No Bueno");
+				len = snprintf(msg, sizeof(msg), "No Bueno\r\n");
 				HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
 				radioTx((uint8_t *)payload, sizeof(payload));
 			}
 			else{
-				len = snprintf(msg, sizeof(msg), "Transmit Complete");
+				len = snprintf(msg, sizeof(msg), "Transmit Complete\r\n");
 				HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
 			}
 		}

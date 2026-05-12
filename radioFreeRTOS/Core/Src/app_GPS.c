@@ -232,7 +232,7 @@ GPS_Status gps_call_location(GPS_PVT *out){
 	if (gps_send(GPS_CLASS_NAV, 0x07, NULL, 0) != GPS_OK){
 		return GPS_ERROR;
 	}
-
+	HAL_UART_Transmit(&huart2, (uint8_t*)"NAV returned\r\n", 14, 100);
 	//Function variables to parse the location frame out
 	uint8_t frame[100];
 	uint16_t idx = 0;

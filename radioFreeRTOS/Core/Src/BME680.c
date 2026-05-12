@@ -509,7 +509,8 @@ bme680_config(); //Configuring all registers for measurements and acquiring comp
 char msg[48];
 int len;
 while(1){
-	vTaskDelay(pdMS_TO_TICKS(5000)); //Periodic Task
+	ulTaskNotifyTake(pdTRUE, portMAX_DELAY); //Wait for signal from scheduler
+
 	//Gas reference will run 10 forced measurements to acquire average gas measurement and heat the hot plate
 	//This will take app. 1.5 seconds, but it uses vTaskDelay to give up the CPU in the meantime
 	bme68x_GetGasReference(); //Gas reference will assign all raw data and performs the compensation math for the gas measurement

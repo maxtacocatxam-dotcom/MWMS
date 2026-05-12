@@ -12,6 +12,8 @@
 #include "app_GPS.h"
 #include "BME680.h"
 
+TaskHandle_t ControllerTaskHandle;
+
 void vControllerTask(void *pvParameters){
 	const TickType_t xblockTime = pdMS_TO_TICKS( 600000 ); //10 minutes timeout
 	while(1){

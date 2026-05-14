@@ -1,10 +1,34 @@
-/*
- * BME680.c
+/******************************************************************************
+ * File Name    : BME680.c
+ * Description  : Bosch BME680 environmental sensor driver implementation.
  *
- *  Created on: Feb 25, 2026
- *      Author: jdapo
- */
+ * This module is responsible for:
+ *  - Sensor initialization and configuration
+ *  - Calibration coefficient extraction
+ *  - Raw sensor acquisition
+ *  - Fixed-point compensation algorithms
+ *  - Indoor Air Quality (IAQ) estimation
+ *  - RTOS-based sensor acquisition task
+ *
+ * Sensor Outputs:
+ *  - Temperature
+ *  - Pressure
+ *  - Humidity
+ *  - Gas Resistance
+ *  - IAQ Estimate
+ *
+ * Notes:
+ *  - Compensation math is derived from the Bosch BME680 datasheet.
+ *  - Compensation is performed using fixed-point arithmetic.
+ *  - Sensor task communicates with the aggregator through a FreeRTOS queue.
+ *
+ * Author       : Jeremiah Apolista
+ * Created      : Feb 25, 2026
+ ******************************************************************************/
 
+/*****************************************************************************/
+/* Includes                                                                  */
+/*****************************************************************************/
 #include "BME680.h"
 #include "I2C.h"
 #include "stm32wlxx_hal.h"
@@ -18,14 +42,18 @@
 #include <stdio.h>
 #include "app_scheduler.h"
 
-
+/*****************************************************************************/
+/* Private Defines                                                           */
+/*****************************************************************************/
 #define BME680_ADD 0x76
 #define BME680_OK 0
 #define BME680_CHIP_ID 0x61
 
 TaskHandle_t SensorTaskHandle;
 
-//Private Function Declarations
+/*****************************************************************************/
+/* Private Function Prototypes                                               */
+/*****************************************************************************/
 uint8_t bme680_soft_reset(void);
 uint8_t bme_read_calibration(void);
 void bme680_temp_comp(void);
@@ -38,6 +66,9 @@ void bme680_start_meas(void);
 void bme680_read_raw(void);
 void bme680_data_comp(void);
 
+/*****************************************************************************/
+/* Static Lookup Tables                                                      */
+/*****************************************************************************/
 const uint32_t const_array1_int[16] = {2147483647, 2147483647, 2147483647, 2147483647,
 									  2147483647, 2126008810, 2147483647, 2130303777,
 									  2147483647, 2147483647, 2143188679, 2136746228,
@@ -47,17 +78,75 @@ const uint32_t const_array2_int[16] = {4096000000, 2048000000, 1024000000, 51200
 	    							  255744255, 127110228, 64000000, 32258064,
 	                                  16016016, 8000000, 4000000, 2000000,
 	                                  1000000, 500000, 250000, 125000};
+/******************************************************************************
+ * Private Typedefs
+******************************************************************************/
+typedef struct
+{
+    /*! Calibration coefficient for the humidity sensor */
+    uint16_t par_h1;
+    uint16_t par_h2;
+    int8_t par_h3;
+    int8_t par_h4;
+    int8_t par_h5;
+    uint8_t par_h6;
+    int8_t par_h7;
+    int8_t par_gh1;
+    int16_t par_gh2;
+    int8_t par_gh3;
 
+    /*! Calibration coefficient for the temperature sensor */
+    uint16_t par_t1;
+    int16_t par_t2;
+    int8_t par_t3;
+
+    /*! Calibration coefficient for the pressure sensor */
+    uint16_t par_p1;
+    int16_t par_p2;
+    int8_t par_p3;
+    int16_t par_p4;
+    int16_t par_p5;
+    int8_t par_p6;
+    int8_t par_p7;
+    int16_t par_p8;
+    int16_t par_p9;
+    uint8_t par_p10;
+
+    uint8_t  res_heat_range;
+    int8_t   res_heat_val;
+    int8_t   range_sw_err;
+} bme_calib_t;
+
+typedef struct
+{
+	uint32_t pres;
+	uint32_t temp;
+	uint16_t humi;
+	uint16_t gas_res;
+	uint8_t gas_range;
+} bme_raw_t;
+
+typedef struct{
+	int64_t pres;
+	int32_t temp;
+	int32_t hum;
+	int32_t gas_res;
+	int32_t gas_range;
+} bme_comp_t;
+
+/*****************************************************************************/
+/* Driver State Variables                                                    */
+/*****************************************************************************/
 bme_calib_t calib;
 bme_raw_t rawData;
 bme_comp_t compData;
-int32_t t_fine; //This is a variable used in the compensation equations, it is populated by temp compensation
+/* This is a variable used in the compensation equations,
+ it is populated by temp compensation */
+int32_t t_fine;
 
-
-
-
-
-// IAQ Calculation Variables
+/*****************************************************************************/
+/* IAQ Calculation Variables                                                 */
+/*****************************************************************************/
 int32_t humidity_score, gas_score;
 int32_t gas_reference = 250000;
 int32_t hum_reference = 40;
@@ -65,6 +154,25 @@ int8_t getgasreference_count = 0;
 int32_t gas_lower_limit = 5000;   // Bad air quality limit
 int32_t gas_upper_limit = 50000;  // Good air quality limit
 
+/*****************************************************************************
+ * Function Name : bme680_init
+ *
+ * Description:
+ * Initializes the BME680 sensor by:
+ *  - Performing a soft reset
+ *  - Verifying the chip ID
+ *  - Reading calibration coefficients from sensor memory
+ *
+ * Parameters:
+ *  None
+ *
+ * Returns:
+ *  0 : Initialization successful
+ *  1 : Initialization failed
+ *
+ * Notes:
+ *  Calibration values are stored in a private calibration structure.
+ ******************************************************************************/
 uint8_t bme680_init(void){
 	uint8_t tmp;
 	tmp = bme680_soft_reset();
@@ -82,6 +190,29 @@ uint8_t bme680_init(void){
 	return 1; //Initialization failed
 }
 
+/******************************************************************************
+ * Function Name : bme_read_calibration
+ *
+ * Description:
+ * Reads calibration coefficients stored in the BME680 non-volatile memory.
+ * These coefficients are required for fixed-point compensation calculations.
+ *
+ * Calibration groups include:
+ *  - Temperature calibration
+ *  - Pressure calibration
+ *  - Humidity calibration
+ *  - Gas sensor calibration
+ *
+ * Parameters:
+ *  None
+ *
+ * Returns:
+ *  0 : Calibration read successful
+ *  1 : Calibration read failed
+ *
+ * Notes:
+ *  Register mappings are taken directly from the Bosch datasheet.
+ *****************************************************************************/
 uint8_t bme_read_calibration(void){
 	uint8_t calib1[23];
 	uint8_t calib2[14];
@@ -193,7 +324,29 @@ uint8_t bme680_soft_reset(void){
 	return 1;
 }
 
-
+/******************************************************************************
+ * Function Name : bme680_config
+ *
+ * Description:
+ * Configures the BME680 operating registers.
+ *
+ * Configuration includes:
+ *  - Humidity oversampling
+ *  - Temperature oversampling
+ *  - Pressure oversampling
+ *  - IIR filter configuration
+ *  - Gas heater timing
+ *  - Gas heater target temperature
+ *
+ * Parameters:
+ *  None
+ *
+ * Returns:
+ *  None
+ *
+ * Notes:
+ *  Heater resistance calculations are derived from the Bosch datasheet.
+ ******************************************************************************/
 void bme680_config(void){
 	uint8_t reg = 0; //register which will contain the commands to pass into the module
 	//Set humidity oversampling to 1x
@@ -240,6 +393,21 @@ void bme680_config(void){
 	HAL_I2C_Mem_Write(&hi2c2, (BME680_ADD << 1), 0x71, I2C_MEMADD_SIZE_8BIT, &reg, 1, 100);
 }
 
+/******************************************************************************
+ * Function Name : bme680_start_meas
+ *
+ * Description:
+ * Starts a single forced-mode measurement.
+ *
+ * The function preserves the existing oversampling configuration while
+ * enabling the forced measurement mode bits in ctrl_meas.
+ *
+ * Parameters:
+ *  None
+ *
+ * Returns:
+ *  None
+ *****************************************************************************/
 void bme680_start_meas(void){
 	uint8_t readReg = 0;
 	//Reading from ctrl_meas first to not overwrite osrs_t and osrs_p
@@ -272,95 +440,180 @@ void bme680_read_raw(void){
 	rawData.gas_range = (rawBuffer[12] & 0x0F);
 }
 
-/*
- * bme680_temp_comp
- * This function performs the compensation math on the raw temperature value to obtain
- * the ambient temperature collected by the sensor. The math for this code was provided
- * by the data sheet and is done in fixed point. The temperature that is returned is the
- * temperature in celcius * 100
+/******************************************************************************
+ * Function Name : bme680_read_raw
  *
- * 04/22/2026 Jeremiah Apolista
- */
+ * Description:
+ * Reads raw ADC data from the BME680 measurement registers.
+ *
+ * Raw measurements include:
+ *  - Pressure ADC
+ *  - Temperature ADC
+ *  - Humidity ADC
+ *  - Gas resistance ADC
+ *
+ * Parameters:
+ *  None
+ *
+ * Returns:
+ *  None
+ *
+ * Notes:
+ *  Raw register values are packed across multiple registers and must be
+ *  reconstructed according to the datasheet bit layout.
+ ******************************************************************************/
 void bme680_temp_comp(void){
-	int32_t var1 = ((int32_t)rawData.temp >> 3) - ((int32_t)calib.par_t1 << 1); //Math manipulating the raw value with 1st calibration parameter
+	// First-order temperature compensation
+	int32_t var1 = ((int32_t)rawData.temp >> 3) - ((int32_t)calib.par_t1 << 1);
+	// Apply temperature calibration scaling
 	int32_t var2 = (var1 * (int32_t)calib.par_t2) >> 11;
-	int32_t var3 = ((((var1 >> 1) * (var1 >> 1)) >> 12) * ((int32_t)calib.par_t3 << 4)) >> 14;
-	t_fine = var2 + var3; //This public variable will be set here and used in the pressure compensation math
-	int32_t temp_comp = ((t_fine * 5) + 128) >> 8; //This returns the temperature in celcius times 100
+	// Second-order temperature correction
+	int32_t var3 = ((((var1 >> 1) * (var1 >> 1)) >> 12)
+			* ((int32_t)calib.par_t3 << 4)) >> 14;
+	 /*
+	 * t_fine is an intermediate variable reused by
+	 * pressure compensation calculations.
+	 */
+	t_fine = var2 + var3;
+	// Convert compensated temperature to Celsius x100
+	int32_t temp_comp = ((t_fine * 5) + 128) >> 8;
+	// Store compensated result in driver structure
 	compData.temp = temp_comp;
 }
 
-/*
- * bme680_press_comp
- * This function performs the compensation math on the raw pressure measurement.
- * The resolution of the pressure data is dependent on the IIR filter. The math for this function
- * is taken from the datasheet and is done in fixed point
+/******************************************************************************
+ * Function Name : bme680_press_comp
  *
- * 04/22/2026 Jeremiah Apolista
- */
+ * Description:
+ * Performs fixed-point compensation on the raw pressure ADC measurement.
+ * Compensation coefficients are provided by the BME680 calibration memory.
+ *
+ * Parameters:
+ *  None
+ *
+ * Returns:
+ *  None
+ *
+ * Notes:
+ *  Pressure output is stored in Pascals.
+ *  Compensation equations are derived from the Bosch datasheet.
+ ******************************************************************************/
 void bme680_press_comp(void){
-	//All 10 calibration parameters are used
-	//rawData.pres is the raw pressure value
-	//press_comp is the compensated pressure output data in pascal
+	 // Initial pressure compensation using t_fine
 	int64_t var1 = ((int32_t)t_fine >> 1) - 64000;
-	int64_t var2 = ((((var1 >> 2) * (var1 >> 2)) >> 11) * (int32_t)calib.par_p6) >> 2;
+	// Compute second-order pressure offset
+	int64_t var2 = ((((var1 >> 2) * (var1 >> 2)) >> 11)
+				* (int32_t)calib.par_p6) >> 2;
+
 	var2 = var2 + ((var1 * (int32_t)calib.par_p5) << 1 );
 	var2 = (var2 >> 2) + ((int32_t)calib.par_p4 << 16);
+	// Compute pressure sensitivity
 	var1 = (((((var1 >> 2) * (var1 >> 2)) >> 13) *
-			((int32_t)calib.par_p3 << 5)) >> 3) + (((int32_t)calib.par_p2 *var1) >> 1);
+			((int32_t)calib.par_p3 << 5)) >> 3) +
+			(((int32_t)calib.par_p2 *var1) >> 1);
+
 	var1 = var1 >> 18;
 	var1 = ((32768 + var1) * (int32_t)calib.par_p1) >> 15;
+
+	// Calculate uncompensated pressure
 	int64_t press_comp = 1048576 - rawData.pres;
-	press_comp = (uint32_t)((press_comp - (var2 >>12)) * ((uint32_t)3125));
+
+	press_comp = (uint32_t)((press_comp - (var2 >>12))
+			* ((uint32_t)3125));
+	// Prevent overflow during division
 	if(press_comp >= (1 << 30)){
 		press_comp = ((press_comp / (uint32_t)var1) << 1);
 	}
 	else{
 		press_comp = ((press_comp << 1) / (uint32_t)var1);
 	}
-	var1 = ((int32_t)calib.par_p9 * (int32_t)(((press_comp >> 3) * (press_comp >> 3)) >> 13)) >> 12;
-	var2 = ((int32_t)(press_comp >> 8) * (int32_t)calib.par_p8) >> 13;
-	int64_t var3 = ((int32_t)(press_comp >> 8) * (int32_t)(press_comp >> 8) * (int32_t)(press_comp >> 8) * (int32_t)calib.par_p10) >> 17;
-	press_comp = (int32_t)(press_comp) + ((var1 +var2 + var3 + ((int32_t)calib.par_p7 << 7)) >> 4);
+	// Final compensation corrections
+	var1 = ((int32_t)calib.par_p9 * (int32_t)(((press_comp >> 3)
+			* (press_comp >> 3)) >> 13)) >> 12;
+
+	var2 = ((int32_t)(press_comp >> 8)
+			* (int32_t)calib.par_p8) >> 13;
+
+	int64_t var3 = ((int32_t)(press_comp >> 8)
+				* (int32_t)(press_comp >> 8)
+				* (int32_t)(press_comp >> 8)
+				* (int32_t)calib.par_p10) >> 17;
+
+	// Store compensated pressure value
+	press_comp = (int32_t)(press_comp) +
+				((var1 +var2 + var3
+				+ ((int32_t)calib.par_p7 << 7)) >> 4);
+
 	compData.pres = press_comp;
 }
 
-/*
- * bme680_hum_comp
- * This function performs the compensation math required to obtain a usable humidity values
- * The compensated humidity is output in percent. The resolution of the humidity measurement is fixed at 16 bit ADC output.
- * The following math is taken directly from the datasheet, all done in fixed point. Compensated data is accessed through
- * the public struct
- *
- * 04/22/2026 Jeremiah Apolista
- */
+/******************************************************************************
+* Function Name : bme680_hum_comp
+*
+* Description:
+* Performs fixed-point humidity compensation using raw ADC data and
+* humidity calibration coefficients stored in sensor memory.
+*
+* Parameters:
+*  None
+*
+* Returns:
+*  None
+*
+* Notes:
+*  Humidity output is stored as percent relative humidity x1000.
+******************************************************************************/
 void bme680_hum_comp(void){
-	//All humidity calibration parameters are used
-	//rawData.hum is the raw humidity output data
-	//hum_comp is the compensated humidity output data in percent
+	// Retrieve compensated temperature for humidity correction
 	int32_t temp_scaled = compData.temp;
-	int32_t var1 = (int32_t)rawData.humi - (int32_t)((int32_t)calib.par_h1 << 4) -
-			(((temp_scaled * (int32_t)calib.par_h3) / ((int32_t)100)) >> 1);
-	int32_t var2 = ((int32_t)calib.par_h2 * (((temp_scaled * (int32_t)calib.par_h4) / ((int32_t)100)) +
-			(((temp_scaled * ((temp_scaled*(int32_t)calib.par_h5) / ((int32_t)100))) >> 6) / ((int32_t)100)) +
-			((int32_t)(1 << 14)))) >> 10;
+
+	// Primary humidity compensation
+	int32_t var1 = (int32_t)rawData.humi
+				- (int32_t)((int32_t)calib.par_h1 << 4)
+				-(((temp_scaled * (int32_t)calib.par_h3)
+				/ ((int32_t)100)) >> 1);
+
+	// Apply humidity temperature scaling
+	int32_t var2 = ((int32_t)calib.par_h2
+				* (((temp_scaled * (int32_t)calib.par_h4)
+				/ ((int32_t)100))
+				+ (((temp_scaled
+				* ((temp_scaled*(int32_t)calib.par_h5)
+				/ ((int32_t)100))) >> 6) / ((int32_t)100))
+				+ ((int32_t)(1 << 14)))) >> 10;
+
+	// Intermediate humidity value
 	int32_t var3 = var1 * var2;
-	int32_t var4 = (((int32_t)calib.par_h6 << 7) + ((temp_scaled * (int32_t)calib.par_h7) / ((int32_t)100))) >> 4;
+
+	// Higher-order humidity correction
+	int32_t var4 = (((int32_t)calib.par_h6 << 7)
+				+ ((temp_scaled * (int32_t)calib.par_h7)
+				/ ((int32_t)100))) >> 4;
+
 	int32_t var5 = ((var3 >> 14) * (var3 >>14)) >> 10;
 	int32_t var6 = (var4 * var5) >> 1;
+
+	// Final compensated humidity output
 	int32_t hum_comp = (((var3 + var6) >> 10) * ((int32_t)1000)) >> 12;
 	compData.hum = hum_comp;
 }
 
-/*
- * bme680_gas_comp
- * This function is responsible for converting the ADC value into gas sensor
- * resistance in ohms. This function first obtains the gas ADC value, range, and
- * the range switching error. It then performs the math to convert the ADC value
- * into ohms
- *
- * 04/23/2026 Jeremiah Apolista
- */
+/******************************************************************************
+* Function Name : bme680_gas_comp
+*
+* Description:
+* Converts the raw gas ADC measurement into gas sensor resistance in ohms.
+* Lookup tables provided by Bosch are used during compensation.
+*
+* Parameters:
+*  None
+*
+* Returns:
+*  None
+*
+* Notes:
+*  Gas resistance is used as part of the IAQ estimation process.
+******************************************************************************/
 void bme680_gas_comp(void){
 	//range_sw_err is a calibration parameter used in the compensation math
 	//const_array are lookup tables provided by Bosch
@@ -438,32 +691,80 @@ void bme680_data_comp(void){
 */
 
 /* IAQ functions */
+
+/******************************************************************************
+* Function Name : bme68x_GetGasReference
+*
+* Description:
+* Acquires multiple gas resistance measurements and computes an averaged
+* gas reference value used for Indoor Air Quality (IAQ) estimation.
+*
+* Parameters:
+*  None
+*
+* Returns:
+*  None
+*
+* Notes:
+*  The gas sensor hot plate requires a stabilization period before
+*  meaningful measurements can be obtained. Multiple forced-mode
+*  measurements are averaged together to improve IAQ stability.
+******************************************************************************/
 void bme68x_GetGasReference(void) {
-	// Now run the sensor for a burn-in period, then use combination of relative humidity and gas resistance to estimate indoor air quality as a percentage.
 
 	uint8_t readings = 10;
+	// Clear previous accumulated gas reference
+	gas_reference = 0;
 	for (int i = 1; i <= readings; i++) { // read gas for 10 x 0.150mS = 1.5secs
-		bme680_start_meas(); //Starting the measurement
-		vTaskDelay(pdMS_TO_TICKS(200)); //OS aware delay to allow sensor to heat hot plate and take measurements
-		bme680_read_raw(); // raw data must be extracted from registers in bme
-		bme680_gas_comp(); //Performing the compensation math for gas resistance
+		// Trigger a forced-mode measurement
+		bme680_start_meas();
+		 /*
+		 * Allow time for heater stabilization and ADC conversion.
+		 * vTaskDelay is RTOS-aware and yields CPU time.
+		 */
+		vTaskDelay(pdMS_TO_TICKS(200));
+
+		// Read raw ADC values from sensor registers
+		bme680_read_raw();
+		// Perform gas resistance compensation
+		bme680_gas_comp();
+		// Accumulate compensated gas resistance
 		gas_reference += bme680_get_gasres();
 
 	}
+	// Compute average gas reference value
 	gas_reference = gas_reference / (int32_t)readings; //Obtaining the average gas resistance to use as reference
 
 }
 
-//Calculate humidity contribution to IAQ index
+/*****************************************************************************
+ * Function Name : bme68x_GetHumidityScore
+ *
+ * Description:
+ * Computes the humidity contribution to the Indoor Air Quality (IAQ)
+ * estimate.
+ *
+ * Parameters:
+ *  None
+ *
+ * Returns:
+ *  int8_t : Humidity contribution score
+ *
+ * Notes:
+ *  Relative humidity near 40% is considered optimal for indoor air quality.
+ ******************************************************************************/
 int8_t bme68x_GetHumidityScore(void) {
-	//Compensated humidity returns percentage * 100, downscaling now
+	// Convert humidity from %RH x1000 to integer percentage
 	int32_t humidity = bme680_get_humid() / 1000;
-	if (humidity >= 38 && humidity <= 42) // Humidity +/-5% around optimum
+	// Humidity within optimal rang
+	if (humidity >= 38 && humidity <= 42)
 		humidity_score = 25;
-	else { // Humidity is sub-optimal
+	else {
+		// Humidity below optimal range
 		if (humidity < 38)
 			humidity_score = (25 * humidity) / hum_reference;
 		else {
+			// Humidity above optimal range
 			humidity_score = ((-25 * humidity) / (100 - hum_reference)) + 42;
 		}
 	}
@@ -471,72 +772,184 @@ int8_t bme68x_GetHumidityScore(void) {
 	return humidity_score;
 }
 
-//Calculate gas contribution to IAQ index
+/*****************************************************************************
+ * Function Name : bme68x_GetGasScore
+ *
+ * Description:
+ * Computes the gas resistance contribution to the Indoor Air Quality (IAQ)
+ * estimate.
+ *
+ * Parameters:
+ *  None
+ *
+ * Returns:
+ *  int8_t : Gas contribution score
+ *
+ * Notes:
+ *  Higher gas resistance generally indicates better air quality.
+ *  Gas reference values must be updated before this function is called.
+ ******************************************************************************/
 int8_t bme68x_GetGasScore(void) {
-	//Gas reference gets updated by GetGasReference. Must be called before IAQ algorithm
-	gas_score = ((75 * gas_reference) / (gas_upper_limit - gas_lower_limit)
-			- ((gas_lower_limit * 75) / (gas_upper_limit - gas_lower_limit)));
+	/*
+	 * Scale gas reference into IAQ contribution range.
+	 * The gas contribution accounts for 75% of the IAQ score.
+	 */
+	gas_score = ((75 * gas_reference)
+				/ (gas_upper_limit - gas_lower_limit)
+				- ((gas_lower_limit * 75)
+				/ (gas_upper_limit - gas_lower_limit)));
+	// Clamp score to upper limit
 	if (gas_score > 75)
-		gas_score = 75; // Sometimes gas readings can go outside of expected scale maximum
+		gas_score = 75;
+	// Clamp score to lower limit
 	if (gas_score < 0)
 		gas_score = 0; // Sometimes gas readings can go outside of expected scale minimum
 
 	return gas_score;
 }
 
+/*****************************************************************************
+ * Function Name : bme68x_iaq
+ *
+ * Description:
+ * Computes the Indoor Air Quality (IAQ) estimate using humidity and
+ * gas resistance contributions.
+ *
+ * Parameters:
+ *  None
+ *
+ * Returns:
+ *  int32_t : IAQ estimate
+ *
+ * Notes:
+ *  Lower IAQ values indicate better air quality.
+ *  Current implementation is experimental and subject to refinement.
+ *****************************************************************************/
 int32_t bme68x_iaq(void) {
-
-	int32_t air_quality_score = (100
-			- (bme68x_GetHumidityScore()
-					+ bme68x_GetGasScore())) * 5;
-	gas_reference = 0; //Resetting the gas_reference
-
-//Commenting this out because it makes no sense
-//	// If 5 measurements passed, recalculate the gas reference.
-//	if ((getgasreference_count++) % 5 == 0)
-//		bme68x_GetGasReference(BME68x_DATA);
+    /*
+     * Combine humidity and gas scores into a single IAQ estimate.
+     * Humidity contributes 25% and gas contributes 75%.
+     */
+	int32_t air_quality_score =
+			(100 - (bme68x_GetHumidityScore()
+			+ bme68x_GetGasScore())) * 5;
+	// Reset gas reference accumulator for next acquisition cycle
+	gas_reference = 0;
 
 	return air_quality_score;
 
 }
 
-/* The following code refers to the task creation of our bme680 */
-
+/******************************************************************************
+ * Function Name : vSensorTask
+ *
+ * Description:
+ * FreeRTOS task responsible for environmental sensor acquisition.
+ *
+ * Task Flow:
+ *  1. Wait for scheduler notification
+ *  2. Trigger forced-mode measurements
+ *  3. Perform compensation calculations
+ *  4. Compute IAQ estimate
+ *  5. Package telemetry data
+ *  6. Send data to aggregator queue
+ *
+ * Synchronization:
+ *  - Task notifications from scheduler/controller task
+ *  - Queue communication with aggregator task
+ *
+ * Parameters:
+ *  pvParameters : Unused
+ *
+ * Returns:
+ *  None
+ ******************************************************************************/
 void vSensorTask(void *pvParameters){
+	// Message structure used for queue transmission
+	Msg_t sentData;
+	// Initialize BME680 sensor
+	bme680_init();
 
-Msg_t sentData; //Data being sent to the queue
-bme680_init(); //Initializing the sensor
-bme680_config(); //Configuring all registers for measurements and acquiring compensation values required
-char msg[48];
-int len;
-while(1){
-	ulTaskNotifyTake(pdTRUE, portMAX_DELAY); //Wait for signal from scheduler
+	/*
+	 * Configure oversampling, IIR filtering,
+	 * and gas heater settings.
+	 */
+	bme680_config();
 
-	//Gas reference will run 10 forced measurements to acquire average gas measurement and heat the hot plate
-	//This will take app. 1.5 seconds, but it uses vTaskDelay to give up the CPU in the meantime
-	bme68x_GetGasReference(); //Gas reference will assign all raw data and performs the compensation math for the gas measurement
+	// UART debug message buffer
+	char msg[48];
+	int len;
 
-	//Performing the rest of the compensations, all will change the compensated data struct private to this file
-	bme680_temp_comp();
-	bme680_press_comp();
-	bme680_hum_comp();
+	while(1){
+        /*
+         * Wait indefinitely for scheduler notification.
+         * The scheduler/controller task determines when
+         * sensor acquisition occurs.
+         */
+		ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-	//Filling the struct which will contain the data being sent
-	sentData.type = MSG_SENSOR; //Telling the aggregator that this is from the sensor
-	sentData.data.sens_msg.humidity = (uint16_t)bme680_get_humid();
-	sentData.data.sens_msg.temperature = (int16_t)bme680_get_temp();
-	sentData.data.sens_msg.pressure = (uint32_t)bme680_get_press();
-	sentData.data.sens_msg.iaq = (uint16_t)bme68x_iaq(); //This will obtain scores based off compensated humidity and gas, and perform IAQ calc
-	//TODO: Fix the IAQ algorithm, also add dsp for the signals very noisy
-	len = snprintf(msg, sizeof(msg), "Sending Sensor to queue");
-	HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
-	//Send data to sensor queue, will wake aggregator task to create payload for radio
-	if(xQueueSendToBack( xMessageQueue, &sentData, pdMS_TO_TICKS(5) ) != pdPASS){
-		//Will add debugging
+        /* Acquire gas reference value.
+        *
+        * This routine performs multiple forced-mode
+        * measurements in order to:
+        *  - heat the gas sensor hot plate
+        *  - stabilize gas resistance readings
+        *  - compute an averaged gas reference value
+        *
+        * vTaskDelay is used internally to yield CPU time
+        * while waiting for sensor conversions.
+        */
+		bme68x_GetGasReference();
+
+		/*
+		* Perform fixed-point compensation calculations
+		* using raw ADC values and calibration coefficients.
+	    */
+		bme680_temp_comp();
+		bme680_press_comp();
+		bme680_hum_comp();
+
+        /*
+        * Populate telemetry message structure.
+        * The aggregator task will later serialize this
+        * data into a radio payload.
+        */
+		sentData.type = MSG_SENSOR;
+		// Store compensated humidity measurement
+		sentData.data.sens_msg.humidity = (uint16_t)bme680_get_humid();
+		// Store compensated temperature measurement
+		sentData.data.sens_msg.temperature = (int16_t)bme680_get_temp();
+		// Store compensated pressure measurement
+		sentData.data.sens_msg.pressure = (uint32_t)bme680_get_press();
+
+        /*
+        * Compute Indoor Air Quality (IAQ) estimate
+        * using humidity and gas resistance scoring.
+        */
+		sentData.data.sens_msg.iaq = (uint16_t)bme68x_iaq();
+		/* TODO:
+	     *  - Improve IAQ scaling behavior
+         *  - Add filtering/DSP for noisy gas measurements
+         *  - Validate gas calibration experimentally
+         */
+
+		// Debug message indicating queue transmissio
+		len = snprintf(msg, sizeof(msg), "Sending Sensor to queue");
+		HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
+
+        /*
+         * Send telemetry packet to aggregator queue.
+         * The aggregator task will combine sensor and GPS
+         * data into a radio-compatible payload.
+         */
+		if(xQueueSendToBack( xMessageQueue,
+							 &sentData,
+							 pdMS_TO_TICKS(5) ) != pdPASS){
+			//Will add failure handling
+		}
 	}
-}
-  //In case we accidentally exit from task loop
-	vTaskDelete(NULL);
+	  //In case we accidentally exit from task loop
+		vTaskDelete(NULL);
 
-}
+	}
 

@@ -24,12 +24,10 @@
 
 #include <stdio.h>
 #include <stdint.h>
-
 #include "message.h"
 #include "FreeRTOS.h"
 #include "queue.h"
 #include "task.h"
-
 #include "app_aggregator.h"
 #include "usart.h"
 #include "app_radio.h"

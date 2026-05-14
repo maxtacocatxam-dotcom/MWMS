@@ -63,16 +63,7 @@ void hum_to_char(uint32_t humidity, char *humidityBuffer, uint8_t bufferSize);
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
 //Radio Task variables
-osMessageQueueId_t radioQueueHandle;
-uint8_t radioQueueBuffer[ 8 * sizeof( radio_event_t ) ];
-StaticQueue_t radioQueueControlBlock;
-const osMessageQueueAttr_t radioQueue_attributes = {
-  .name = "radioQueue",
-  .cb_mem = &radioQueueControlBlock,
-  .cb_size = sizeof(radioQueueControlBlock),
-  .mq_mem = &radioQueueBuffer,
-  .mq_size = sizeof(radioQueueBuffer)
-};
+
 osThreadId_t radioTaskHandle;
 const osThreadAttr_t radioTask_attributes = {
   .name = "radioTask",
@@ -127,7 +118,7 @@ void MX_FREERTOS_Init(void) {
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
-	radioQueueHandle = osMessageQueueNew (8, sizeof(radio_event_t), &radioQueue_attributes);
+	radioQueueHandle = xQueueCreate(8, sizeof(radio_event_t));
 	gpsQueueHandle = osMessageQueueNew (4, sizeof(GPS_PVT), &gpsQueue_attributes);
 	xMessageQueue = xQueueCreate(3, sizeof(Msg_t)); //Initializing sensor queue
 	xRadioQueue = xQueueCreate(3, 22);

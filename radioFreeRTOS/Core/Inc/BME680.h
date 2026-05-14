@@ -1,100 +1,108 @@
 /*
- * BME680.h
+ ******************************************************************************
+ * File Name    : BME680.h
  *
- *  Created on: Feb 25, 2026
- *      Author: jdapo
+ * Description  :
+ * Header file for the BME680 environmental sensor driver and
+ * RTOS sensor acquisition task.
+ *
+ * This module provides:
+ *  - Environmental sensor telemetry structures
+ *  - Sensor task declarations
+ *  - RTOS synchronization object declarations
+ *
+ * Sensor Outputs:
+ *  - Temperature
+ *  - Pressure
+ *  - Humidity
+ *  - Indoor Air Quality (IAQ)
+ *
+ * Notes:
+ *  - Temperature is stored as Celsius x100
+ *  - Humidity is stored as %RH x100
+ *  - Pressure is stored in Pascals
+ *  - IAQ range is approximately 0–500
+ *
+ * Created on : Feb 25, 2026
+ * Author     : jdapo
+ ******************************************************************************
  */
 
 #ifndef INC_BME680_H_
 #define INC_BME680_H_
 
+/*****************************************************************************/
+/* Includes                                                                  */
+/*****************************************************************************/
+
 #include <stdint.h>
+
 #include "FreeRTOS.h"
 #include "FreeRTOSConfig.h"
 #include "task.h"
 #include "queue.h"
 
-extern TaskHandle_t SensorTaskHandle;
-
-
-//Functions needed to be accessed by the task
-uint8_t bme680_init(void);
-void bme680_config(void);
-void bme680_temp_comp(void);
-void bme680_press_comp(void);
-void bme680_hum_comp(void);
-int32_t bme680_get_humid();
-int32_t bme680_get_temp();
-int64_t bme680_get_press();
-void bme68x_GetGasReference(void);
-int32_t bme68x_iaq(void);
-void vSensorTask(void *pvParameters);
-//FreeRTOS Variables
-extern QueueHandle_t xSensorQueue;
+/*****************************************************************************/
+/* FreeRTOS Task Handles                                                     */
+/*****************************************************************************/
 
 /*
- * @brief Structure to hold the calibration coefficients
+ * Handle for the environmental sensor acquisition task.
+ * Used for task notifications and scheduler interaction.
+ */
+extern TaskHandle_t SensorTaskHandle;
+
+/*****************************************************************************/
+/* FreeRTOS Queue Handles                                                    */
+/*****************************************************************************/
+
+/*
+ * Queue used to transfer sensor telemetry packets
+ * from the sensor task to the aggregator task.
+ */
+extern QueueHandle_t xSensorQueue;
+
+/*****************************************************************************/
+/* Sensor Message Structure                                                  */
+/*****************************************************************************/
+
+/*
+ * Structure containing compensated environmental sensor data.
+ *
+ * Members:
+ *  temperature : Temperature in Celsius x100
+ *  pressure    : Pressure in Pascals
+ *  humidity    : Relative humidity in %RH x100
+ *  iaq         : Indoor Air Quality estimate
  */
 typedef struct
 {
-    /*! Calibration coefficient for the humidity sensor */
-    uint16_t par_h1;
-    uint16_t par_h2;
-    int8_t par_h3;
-    int8_t par_h4;
-    int8_t par_h5;
-    uint8_t par_h6;
-    int8_t par_h7;
-    int8_t par_gh1;
-    int16_t par_gh2;
-    int8_t par_gh3;
+    int16_t  temperature;
+    uint32_t pressure;
+    uint16_t humidity;
+    uint16_t iaq;
 
-    /*! Calibration coefficient for the temperature sensor */
-    uint16_t par_t1;
-    int16_t par_t2;
-    int8_t par_t3;
-
-    /*! Calibration coefficient for the pressure sensor */
-    uint16_t par_p1;
-    int16_t par_p2;
-    int8_t par_p3;
-    int16_t par_p4;
-    int16_t par_p5;
-    int8_t par_p6;
-    int8_t par_p7;
-    int16_t par_p8;
-    int16_t par_p9;
-    uint8_t par_p10;
-
-    uint8_t  res_heat_range;
-    int8_t   res_heat_val;
-    int8_t   range_sw_err;
-} bme_calib_t;
-
-typedef struct
-{
-	uint32_t pres;
-	uint32_t temp;
-	uint16_t humi;
-	uint16_t gas_res;
-	uint8_t gas_range;
-} bme_raw_t;
-
-typedef struct{
-	int64_t pres;
-	int32_t temp;
-	int32_t hum;
-	int32_t gas_res;
-	int32_t gas_range;
-} bme_comp_t;
-
-typedef struct {
-    int16_t temperature;   // °C * 100
-    uint32_t pressure;     // Pa
-    uint16_t humidity;     // %RH * 100
-    uint16_t iaq;          // 0–500
 } sensor_msg_t;
 
+/*****************************************************************************/
+/* Function Prototypes                                                       */
+/*****************************************************************************/
 
+/*
+ ******************************************************************************
+ * Function Name : vSensorTask
+ *
+ * Description:
+ * FreeRTOS task responsible for environmental sensor acquisition,
+ * compensation calculations, IAQ estimation, and queue transmission.
+ *
+ * Parameters:
+ *  pvParameters : Unused
+ *
+ * Returns:
+ *  None
+ ******************************************************************************
+ */
+void vSensorTask(void *pvParameters);
 
 #endif /* INC_BME680_H_ */

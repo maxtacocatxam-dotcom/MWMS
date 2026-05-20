@@ -253,10 +253,32 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
 ring_buffer gps_rx_buffer;
 
 void gps_uart_rx_isr(void) {
-	if (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_RXNE)) {
-		uint8_t c = (uint8_t)(huart1.Instance->RDR);
-		store_char(c, &gps_rx_buffer);
-	}
+    uint32_t isrflags = huart1.Instance->ISR;
+
+    // RX data ready
+    if (isrflags & USART_ISR_RXNE_RXFNE)
+    {
+        uint8_t c = (uint8_t)(huart1.Instance->RDR);
+        store_char(c, &gps_rx_buffer);
+    }
+
+    // Overrun error
+    if (isrflags & USART_ISR_ORE)
+    {
+        __HAL_UART_CLEAR_OREFLAG(&huart1);
+    }
+
+    // Framing error
+    if (isrflags & USART_ISR_FE)
+    {
+        __HAL_UART_CLEAR_FEFLAG(&huart1);
+    }
+
+    // Noise error
+    if (isrflags & USART_ISR_NE)
+    {
+        __HAL_UART_CLEAR_NEFLAG(&huart1);
+    }
 }
 
 int gps_uart_available(void) {

@@ -286,7 +286,7 @@ GPS_Status gps_config_nmea(uint8_t state) {
 	uint8_t payload[4 + 5 *2]; //header + 2 key-value pairs
 	uint16_t offset = 0;
 	payload[offset++] = 0x00; //version
-	payload[offset++] = 0x01; //ram
+	payload[offset++] = 0x02; //ram
 	payload[offset++] = 0x00; //reserved
 	payload[offset++] = 0x00; //reserved
 
@@ -385,9 +385,9 @@ GPS_Status gps_init(void){
 	if (gps_config_nmea(0x00) != GPS_OK) {
 		return GPS_ERROR;
 	}
-	if (gps_config_GNSS() != GPS_OK){
-		return GPS_ERROR;
-	}
+//	if (gps_config_GNSS() != GPS_OK){
+//		return GPS_ERROR;
+//	}
 	return GPS_OK;
 }
 

@@ -71,9 +71,9 @@ void vControllerTask(void *pvParameters)
 {
     /*
      * Periodic telemetry acquisition interval.
-     * System performs automatic acquisition every 10 minutes.
+     * System performs automatic acquisition every 10 minutes (6000000.
      */
-    const TickType_t xBlockTime = pdMS_TO_TICKS(600000);
+    const TickType_t xBlockTime = pdMS_TO_TICKS(15000);
 
     while (1)
     {

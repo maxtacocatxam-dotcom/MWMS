@@ -49,6 +49,13 @@
 #define BME680_OK 0
 #define BME680_CHIP_ID 0x61
 
+/*
+ * Bias for the compensated temperature value due to heat from gas plate
+ * affecting temperature sensor. Experimentally determined through calculating
+ * mean of temperature and finding its difference from thermometer
+ */
+#define TEMP_BIAS 410
+
 TaskHandle_t SensorTaskHandle;
 
 /*****************************************************************************/
@@ -391,6 +398,7 @@ void bme680_config(void){
 	//Setting run_gas_l to 1 to enable gas measurements
 	reg = ((0b1 << 4)| 0b0000);
 	HAL_I2C_Mem_Write(&hi2c2, (BME680_ADD << 1), 0x71, I2C_MEMADD_SIZE_8BIT, &reg, 1, 100);
+
 }
 
 /******************************************************************************
@@ -478,7 +486,7 @@ void bme680_temp_comp(void){
 	// Convert compensated temperature to Celsius x100
 	int32_t temp_comp = ((t_fine * 5) + 128) >> 8;
 	// Store compensated result in driver structure
-	compData.temp = temp_comp;
+	compData.temp = temp_comp - TEMP_BIAS; //Subtracting bias determined from experiments
 }
 
 /******************************************************************************
@@ -901,10 +909,6 @@ void vSensorTask(void *pvParameters){
         */
 		bme68x_GetGasReference();
 
-		/*
-		* Perform fixed-point compensation calculations
-		* using raw ADC values and calibration coefficients.
-	    */
 		bme680_temp_comp();
 		bme680_press_comp();
 		bme680_hum_comp();

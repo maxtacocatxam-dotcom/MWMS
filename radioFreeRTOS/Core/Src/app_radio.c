@@ -40,7 +40,7 @@
 #define RF_FREQUENCY                915000000
 
 /* RF output transmit power in dBm */
-#define TX_OUTPUT_POWER             17
+#define TX_OUTPUT_POWER             14
 
 /* LoRa bandwidth selection index */
 #define LORA_BANDWIDTH              0

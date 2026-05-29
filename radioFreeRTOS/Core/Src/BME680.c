@@ -72,6 +72,7 @@ int8_t bme68x_GetHumidityScore(void);
 void bme680_start_meas(void);
 void bme680_read_raw(void);
 void bme680_data_comp(void);
+static uint8_t bme680_read_status(void);
 
 /*****************************************************************************/
 /* Static Lookup Tables                                                      */
@@ -131,6 +132,8 @@ typedef struct
 	uint16_t humi;
 	uint16_t gas_res;
 	uint8_t gas_range;
+	uint8_t gas_valid;
+	uint8_t heat_stab;
 } bme_raw_t;
 
 typedef struct{
@@ -159,7 +162,7 @@ int32_t gas_reference = 250000;
 int32_t hum_reference = 40;
 int8_t getgasreference_count = 0;
 int32_t gas_lower_limit = 5000;   // Bad air quality limit
-int32_t gas_upper_limit = 50000;  // Good air quality limit
+int32_t gas_upper_limit = 500000;  // Good air quality limit
 
 /*****************************************************************************
  * Function Name : bme680_init
@@ -446,6 +449,8 @@ void bme680_read_raw(void){
 				      (uint16_t)((rawBuffer[12] >> 6) & 0x03);
 	//Contains ADC range of measured gas sensor resistance
 	rawData.gas_range = (rawBuffer[12] & 0x0F);
+	rawData.gas_valid = ((rawBuffer[12] >> 5) & 0b1);
+	rawData.heat_stab = ((rawBuffer[12] >> 4) & 0b1);
 }
 
 /******************************************************************************
@@ -723,25 +728,57 @@ void bme68x_GetGasReference(void) {
 	uint8_t readings = 10;
 	// Clear previous accumulated gas reference
 	gas_reference = 0;
+	uint8_t heat_stab_array[10];
+	int32_t gas_array[10];
+	uint8_t range_array[10];
+	uint8_t gas_valid_array[10];
+
+//	//Burn in period, take ten measurements just to get heat plate stable
+//	for(int i =1; i <= readings; i++){
+//		bme680_start_meas();
+//		vTaskDelay(pdMS_TO_TICKS(400));
+//	}
+//	//Discard first 10 measurements
+
 	for (int i = 1; i <= readings; i++) { // read gas for 10 x 0.150mS = 1.5secs
 		// Trigger a forced-mode measurement
 		bme680_start_meas();
-		 /*
-		 * Allow time for heater stabilization and ADC conversion.
-		 * vTaskDelay is RTOS-aware and yields CPU time.
-		 */
-		vTaskDelay(pdMS_TO_TICKS(200));
 
+		uint32_t start = HAL_GetTick();
+		uint8_t stat = 1;
+
+		while(bme680_read_status())
+		{
+		    if((HAL_GetTick() - start) > 1000)
+		    {
+		        // timeout
+		        stat = 0;
+		    	break;
+		    }
+
+		    vTaskDelay(pdMS_TO_TICKS(1));
+		}
 		// Read raw ADC values from sensor registers
 		bme680_read_raw();
-		// Perform gas resistance compensation
-		bme680_gas_comp();
-		// Accumulate compensated gas resistance
-		gas_reference += bme680_get_gasres();
+		heat_stab_array[i - 1] = rawData.heat_stab;
+		range_array[i - 1]= rawData.gas_range;
+		gas_valid_array[i-1] = rawData.gas_valid;
+		//Throw away first two readings
+//		if(i > 2){
+			// Perform gas resistance compensation
+			bme680_gas_comp();
+		gas_array[i-1] = compData.gas_res;
+			// Accumulate compensated gas resistance
+			gas_reference += bme680_get_gasres();
+
+//		}
+
+		vTaskDelay(pdMS_TO_TICKS(500));
+
 
 	}
 	// Compute average gas reference value
-	gas_reference = gas_reference / (int32_t)readings; //Obtaining the average gas resistance to use as reference
+	gas_reference = gas_reference / (int32_t)(readings - 2); //Obtaining the average gas resistance to use as reference
 
 }
 
@@ -845,6 +882,37 @@ int32_t bme68x_iaq(void) {
 	gas_reference = 0;
 
 	return air_quality_score;
+
+}
+
+/*****************************************************************************
+ * Function Name : bme680_read_status
+ *
+ * Description:
+ * Reads the status of the measurement. Helper function which is just
+ * an I2C call to the register containing the measurement
+ * status value
+ *
+ * Parameters:
+ *  None
+ *
+ * Returns:
+ *  uint8_t : value which determines measurement status
+ *
+ * Notes:
+ * 1 = Measuring
+ * 0 = Not Measuring
+ *****************************************************************************/
+static uint8_t bme680_read_status(void){
+	uint8_t cmd = 0;
+	HAL_I2C_Mem_Read(&hi2c2,
+					 (BME680_ADD << 1),
+					 0x1D,					//meas_status_0 register
+					 I2C_MEMADD_SIZE_8BIT,
+					 &cmd,
+					 1,
+					 100);
+	return ((cmd >> 5) & 0b1); //Returning the bit which corresponds to measurement status
 
 }
 

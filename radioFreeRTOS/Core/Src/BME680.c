@@ -906,10 +906,10 @@ int32_t bme68x_iaq(void) {
  *
  * Description:
  * Updates the current baseline using a slow update. This is done by applying
- * weights to each parameter. We give the current baseline a 0.99 weight
- * and the new measurement a 0.01 weight, this is done in fixed point so
+ * weights to each parameter. We give the current baseline a 0.9 weight
+ * and the new measurement a 0.1 weight, this is done in fixed point so
  * everything is scaled up and then divided. For dirty air we scale
- * it by 99.9% reference + .1% current
+ * it by 99% reference + 1% current
  *
  * Parameters:
  *  None
@@ -929,7 +929,7 @@ static void bme680_update_baseline(void){
 	}
 	else{
 		//Dirtier air, slow the update
-		gas_reference = (90 * gas_reference + current_gas) / 100;
+		gas_reference = (99 * gas_reference + current_gas) / 100;
 	}
 
 }

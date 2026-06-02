@@ -49,6 +49,13 @@
 #define BME680_OK 0
 #define BME680_CHIP_ID 0x61
 
+/*
+ * Bias for the compensated temperature value due to heat from gas plate
+ * affecting temperature sensor. Experimentally determined through calculating
+ * mean of temperature and finding its difference from thermometer
+ */
+#define TEMP_BIAS 410
+
 TaskHandle_t SensorTaskHandle;
 
 /*****************************************************************************/
@@ -65,6 +72,8 @@ int8_t bme68x_GetHumidityScore(void);
 void bme680_start_meas(void);
 void bme680_read_raw(void);
 void bme680_data_comp(void);
+static uint8_t bme680_read_status(void);
+static void bme680_update_baseline(void);
 
 /*****************************************************************************/
 /* Static Lookup Tables                                                      */
@@ -124,6 +133,8 @@ typedef struct
 	uint16_t humi;
 	uint16_t gas_res;
 	uint8_t gas_range;
+	uint8_t gas_valid;
+	uint8_t heat_stab;
 } bme_raw_t;
 
 typedef struct{
@@ -152,7 +163,7 @@ int32_t gas_reference = 250000;
 int32_t hum_reference = 40;
 int8_t getgasreference_count = 0;
 int32_t gas_lower_limit = 5000;   // Bad air quality limit
-int32_t gas_upper_limit = 50000;  // Good air quality limit
+int32_t gas_upper_limit = 500000;  // Good air quality limit
 
 /*****************************************************************************
  * Function Name : bme680_init
@@ -391,6 +402,7 @@ void bme680_config(void){
 	//Setting run_gas_l to 1 to enable gas measurements
 	reg = ((0b1 << 4)| 0b0000);
 	HAL_I2C_Mem_Write(&hi2c2, (BME680_ADD << 1), 0x71, I2C_MEMADD_SIZE_8BIT, &reg, 1, 100);
+
 }
 
 /******************************************************************************
@@ -438,6 +450,8 @@ void bme680_read_raw(void){
 				      (uint16_t)((rawBuffer[12] >> 6) & 0x03);
 	//Contains ADC range of measured gas sensor resistance
 	rawData.gas_range = (rawBuffer[12] & 0x0F);
+	rawData.gas_valid = ((rawBuffer[12] >> 5) & 0b1);
+	rawData.heat_stab = ((rawBuffer[12] >> 4) & 0b1);
 }
 
 /******************************************************************************
@@ -478,7 +492,7 @@ void bme680_temp_comp(void){
 	// Convert compensated temperature to Celsius x100
 	int32_t temp_comp = ((t_fine * 5) + 128) >> 8;
 	// Store compensated result in driver structure
-	compData.temp = temp_comp;
+	compData.temp = temp_comp - TEMP_BIAS; //Subtracting bias determined from experiments
 }
 
 /******************************************************************************
@@ -709,31 +723,62 @@ void bme680_data_comp(void){
 *  The gas sensor hot plate requires a stabilization period before
 *  meaningful measurements can be obtained. Multiple forced-mode
 *  measurements are averaged together to improve IAQ stability.
+*  This also acts as the burn in period for the hot plate,
+*  this is required whenever power is loss
 ******************************************************************************/
 void bme68x_GetGasReference(void) {
 
-	uint8_t readings = 10;
+	uint32_t readings = 11;
 	// Clear previous accumulated gas reference
 	gas_reference = 0;
+	uint8_t heat_stab_array[readings];
+	int32_t gas_array[readings];
+	uint8_t range_array[readings];
+	uint8_t gas_valid_array[readings];
+	uint32_t reading_valid = 0;
+
+
 	for (int i = 1; i <= readings; i++) { // read gas for 10 x 0.150mS = 1.5secs
 		// Trigger a forced-mode measurement
 		bme680_start_meas();
-		 /*
-		 * Allow time for heater stabilization and ADC conversion.
-		 * vTaskDelay is RTOS-aware and yields CPU time.
-		 */
-		vTaskDelay(pdMS_TO_TICKS(200));
 
+		uint32_t start = HAL_GetTick();
+		uint8_t stat = 1;
+
+		while(bme680_read_status())
+		{
+		    if((HAL_GetTick() - start) > 1000)
+		    {
+		        // timeout
+		        stat = 0;
+		    	break;
+		    }
+
+		    vTaskDelay(pdMS_TO_TICKS(1));
+		}
 		// Read raw ADC values from sensor registers
 		bme680_read_raw();
-		// Perform gas resistance compensation
-		bme680_gas_comp();
-		// Accumulate compensated gas resistance
-		gas_reference += bme680_get_gasres();
+		if((rawData.gas_valid & rawData.heat_stab) == 1){
+			reading_valid++;
+			heat_stab_array[i - 1] = rawData.heat_stab;
+			range_array[i - 1]= rawData.gas_range;
+			gas_valid_array[i-1] = rawData.gas_valid;
+			bme680_gas_comp();
+			gas_array[i-1] = compData.gas_res;
+				// Accumulate compensated gas resistance
+			gas_reference += bme680_get_gasres();
+		}
+		else{
+			gas_array[i-1] = 0;
+		}
+
+
+		vTaskDelay(pdMS_TO_TICKS(500));
+
 
 	}
 	// Compute average gas reference value
-	gas_reference = gas_reference / (int32_t)readings; //Obtaining the average gas resistance to use as reference
+	gas_reference = gas_reference / (int32_t)(reading_valid); //Obtaining the average gas resistance to use as reference
 
 }
 
@@ -790,14 +835,47 @@ int8_t bme68x_GetHumidityScore(void) {
  *  Gas reference values must be updated before this function is called.
  ******************************************************************************/
 int8_t bme68x_GetGasScore(void) {
+	uint32_t readings = 11;
+	int32_t avg_gas = 0;
+	for (int i = 1; i <= readings; i++) { // read gas for 10 x 0.150mS = 1.5secs
+			// Trigger a forced-mode measurement
+			bme680_start_meas();
+
+			uint32_t start = HAL_GetTick();
+			uint8_t stat = 1;
+
+			while(bme680_read_status())
+			{
+			    if((HAL_GetTick() - start) > 1000)
+			    {
+			        // timeout
+			        stat = 0;
+			    	break;
+			    }
+
+			    vTaskDelay(pdMS_TO_TICKS(1));
+			}
+			// Read raw ADC values from sensor registers
+			bme680_read_raw();
+			if((rawData.gas_valid & rawData.heat_stab) == 1){
+				bme680_gas_comp();
+				// Accumulate compensated gas resistance
+				avg_gas += bme680_get_gasres();
+			}
+
+
+			vTaskDelay(pdMS_TO_TICKS(500));
+	}
+
+	avg_gas = avg_gas / readings;
+
 	/*
 	 * Scale gas reference into IAQ contribution range.
 	 * The gas contribution accounts for 75% of the IAQ score.
 	 */
-	gas_score = ((75 * gas_reference)
-				/ (gas_upper_limit - gas_lower_limit)
-				- ((gas_lower_limit * 75)
-				/ (gas_upper_limit - gas_lower_limit)));
+
+	int32_t scaled_gas = avg_gas * 100; //Scaling Resistance by 100 for FP math
+	gas_score = (75 * (scaled_gas / gas_reference)) / 100;
 	// Clamp score to upper limit
 	if (gas_score > 75)
 		gas_score = 75;
@@ -833,10 +911,71 @@ int32_t bme68x_iaq(void) {
 	int32_t air_quality_score =
 			(100 - (bme68x_GetHumidityScore()
 			+ bme68x_GetGasScore())) * 5;
-	// Reset gas reference accumulator for next acquisition cycle
-	gas_reference = 0;
 
 	return air_quality_score;
+
+}
+
+/*****************************************************************************
+ * Function Name : bme680_update_baseline
+ *
+ * Description:
+ * Updates the current baseline using a slow update. This is done by applying
+ * weights to each parameter. We give the current baseline a 0.99 weight
+ * and the new measurement a 0.01 weight, this is done in fixed point so
+ * everything is scaled up and then divided. For dirty air we scale
+ * it by 99.9% reference + .1% current
+ *
+ * Parameters:
+ *  None
+ *
+ * Returns:
+ * 	None, updates variable in this module
+ *
+ * Notes:
+ *  .
+ *****************************************************************************/
+static void bme680_update_baseline(void){
+	int32_t current_gas = bme680_get_gasres();
+	if(current_gas > gas_reference)
+	{
+	    // Found cleaner air, allow baseline to rise
+		gas_reference = (9 * gas_reference + current_gas) / 10;
+	}
+	else{
+		//Dirtier air, slow the update
+		gas_reference = (90 * gas_reference + current_gas) / 100;
+	}
+
+}
+/*****************************************************************************
+ * Function Name : bme680_read_status
+ *
+ * Description:
+ * Reads the status of the measurement. Helper function which is just
+ * an I2C call to the register containing the measurement
+ * status value
+ *
+ * Parameters:
+ *  None
+ *
+ * Returns:
+ *  uint8_t : value which determines measurement status
+ *
+ * Notes:
+ * 1 = Measuring
+ * 0 = Not Measuring
+ *****************************************************************************/
+static uint8_t bme680_read_status(void){
+	uint8_t cmd = 0;
+	HAL_I2C_Mem_Read(&hi2c2,
+					 (BME680_ADD << 1),
+					 0x1D,					//meas_status_0 register
+					 I2C_MEMADD_SIZE_8BIT,
+					 &cmd,
+					 1,
+					 100);
+	return ((cmd >> 5) & 0b1); //Returning the bit which corresponds to measurement status
 
 }
 
@@ -876,6 +1015,19 @@ void vSensorTask(void *pvParameters){
 	 */
 	bme680_config();
 
+    /* Acquire gas reference value.
+    *
+    * This routine performs multiple forced-mode
+    * measurements in order to:
+    *  - heat the gas sensor hot plate
+    *  - stabilize gas resistance readings
+    *  - compute an averaged gas reference value
+    *
+    * vTaskDelay is used internally to yield CPU time
+    * while waiting for sensor conversions.
+    */
+	bme68x_GetGasReference();
+
 	// UART debug message buffer
 	char msg[48];
 	int len;
@@ -888,27 +1040,25 @@ void vSensorTask(void *pvParameters){
          */
 		ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-        /* Acquire gas reference value.
-        *
-        * This routine performs multiple forced-mode
-        * measurements in order to:
-        *  - heat the gas sensor hot plate
-        *  - stabilize gas resistance readings
-        *  - compute an averaged gas reference value
-        *
-        * vTaskDelay is used internally to yield CPU time
-        * while waiting for sensor conversions.
-        */
-		bme68x_GetGasReference();
+		// Trigger a forced-mode measurement
+		bme680_start_meas();
 
-		/*
-		* Perform fixed-point compensation calculations
-		* using raw ADC values and calibration coefficients.
-	    */
-		bme680_temp_comp();
-		bme680_press_comp();
-		bme680_hum_comp();
+		uint32_t start = HAL_GetTick();
 
+		while(bme680_read_status())
+		{
+		    if((HAL_GetTick() - start) > 1000)
+		    {
+		        // timeout
+		    	break;
+		    }
+
+		    vTaskDelay(pdMS_TO_TICKS(1));
+		}
+		// Read raw ADC values from sensor registers
+		bme680_read_raw();
+		//Compensating all values to atmospheric data
+		bme680_data_comp();
         /*
         * Populate telemetry message structure.
         * The aggregator task will later serialize this
@@ -932,6 +1082,9 @@ void vSensorTask(void *pvParameters){
          *  - Add filtering/DSP for noisy gas measurements
          *  - Validate gas calibration experimentally
          */
+
+		//Update the baseline with new data
+		bme680_update_baseline();
 
 		// Debug message indicating queue transmissio
 		len = snprintf(msg, sizeof(msg), "Sending Sensor to queue");

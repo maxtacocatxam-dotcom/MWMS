@@ -731,10 +731,6 @@ void bme68x_GetGasReference(void) {
 	uint32_t readings = 11;
 	// Clear previous accumulated gas reference
 	gas_reference = 0;
-	uint8_t heat_stab_array[readings];
-	int32_t gas_array[readings];
-	uint8_t range_array[readings];
-	uint8_t gas_valid_array[readings];
 	uint32_t reading_valid = 0;
 
 
@@ -743,14 +739,12 @@ void bme68x_GetGasReference(void) {
 		bme680_start_meas();
 
 		uint32_t start = HAL_GetTick();
-		uint8_t stat = 1;
 
 		while(bme680_read_status())
 		{
 		    if((HAL_GetTick() - start) > 1000)
 		    {
 		        // timeout
-		        stat = 0;
 		    	break;
 		    }
 
@@ -760,16 +754,9 @@ void bme68x_GetGasReference(void) {
 		bme680_read_raw();
 		if((rawData.gas_valid & rawData.heat_stab) == 1){
 			reading_valid++;
-			heat_stab_array[i - 1] = rawData.heat_stab;
-			range_array[i - 1]= rawData.gas_range;
-			gas_valid_array[i-1] = rawData.gas_valid;
 			bme680_gas_comp();
-			gas_array[i-1] = compData.gas_res;
-				// Accumulate compensated gas resistance
+			// Accumulate compensated gas resistance
 			gas_reference += bme680_get_gasres();
-		}
-		else{
-			gas_array[i-1] = 0;
 		}
 
 
@@ -842,14 +829,12 @@ int8_t bme68x_GetGasScore(void) {
 			bme680_start_meas();
 
 			uint32_t start = HAL_GetTick();
-			uint8_t stat = 1;
 
 			while(bme680_read_status())
 			{
 			    if((HAL_GetTick() - start) > 1000)
 			    {
 			        // timeout
-			        stat = 0;
 			    	break;
 			    }
 
@@ -921,10 +906,10 @@ int32_t bme68x_iaq(void) {
  *
  * Description:
  * Updates the current baseline using a slow update. This is done by applying
- * weights to each parameter. We give the current baseline a 0.99 weight
- * and the new measurement a 0.01 weight, this is done in fixed point so
+ * weights to each parameter. We give the current baseline a 0.9 weight
+ * and the new measurement a 0.1 weight, this is done in fixed point so
  * everything is scaled up and then divided. For dirty air we scale
- * it by 99.9% reference + .1% current
+ * it by 99% reference + 1% current
  *
  * Parameters:
  *  None
@@ -944,7 +929,7 @@ static void bme680_update_baseline(void){
 	}
 	else{
 		//Dirtier air, slow the update
-		gas_reference = (90 * gas_reference + current_gas) / 100;
+		gas_reference = (99 * gas_reference + current_gas) / 100;
 	}
 
 }

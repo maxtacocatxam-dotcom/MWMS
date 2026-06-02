@@ -728,7 +728,7 @@ void bme680_data_comp(void){
 ******************************************************************************/
 void bme68x_GetGasReference(void) {
 
-	uint32_t readings = 100;
+	uint32_t readings = 11;
 	// Clear previous accumulated gas reference
 	gas_reference = 0;
 	uint8_t heat_stab_array[readings];
@@ -835,11 +835,46 @@ int8_t bme68x_GetHumidityScore(void) {
  *  Gas reference values must be updated before this function is called.
  ******************************************************************************/
 int8_t bme68x_GetGasScore(void) {
+	uint32_t readings = 11;
+	int32_t avg_gas = 0;
+	for (int i = 1; i <= readings; i++) { // read gas for 10 x 0.150mS = 1.5secs
+			// Trigger a forced-mode measurement
+			bme680_start_meas();
+
+			uint32_t start = HAL_GetTick();
+			uint8_t stat = 1;
+
+			while(bme680_read_status())
+			{
+			    if((HAL_GetTick() - start) > 1000)
+			    {
+			        // timeout
+			        stat = 0;
+			    	break;
+			    }
+
+			    vTaskDelay(pdMS_TO_TICKS(1));
+			}
+			// Read raw ADC values from sensor registers
+			bme680_read_raw();
+			if((rawData.gas_valid & rawData.heat_stab) == 1){
+				bme680_gas_comp();
+				// Accumulate compensated gas resistance
+				avg_gas += bme680_get_gasres();
+			}
+
+
+			vTaskDelay(pdMS_TO_TICKS(500));
+	}
+
+	avg_gas = avg_gas / readings;
+
 	/*
 	 * Scale gas reference into IAQ contribution range.
 	 * The gas contribution accounts for 75% of the IAQ score.
 	 */
-	int32_t scaled_gas = bme680_get_gasres() * 100; //Scaling Resistance by 100 for FP math
+
+	int32_t scaled_gas = avg_gas * 100; //Scaling Resistance by 100 for FP math
 	gas_score = (75 * (scaled_gas / gas_reference)) / 100;
 	// Clamp score to upper limit
 	if (gas_score > 75)
@@ -905,11 +940,11 @@ static void bme680_update_baseline(void){
 	if(current_gas > gas_reference)
 	{
 	    // Found cleaner air, allow baseline to rise
-		gas_reference = (99 * gas_reference + current_gas) / 100;
+		gas_reference = (9 * gas_reference + current_gas) / 10;
 	}
 	else{
 		//Dirtier air, slow the update
-		gas_reference = (999 * gas_reference + current_gas) / 1000;
+		gas_reference = (90 * gas_reference + current_gas) / 100;
 	}
 
 }

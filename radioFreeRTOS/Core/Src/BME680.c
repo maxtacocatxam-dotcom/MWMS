@@ -849,7 +849,7 @@ int8_t bme68x_GetGasScore(void) {
 			}
 
 
-			vTaskDelay(pdMS_TO_TICKS(500));
+			vTaskDelay(pdMS_TO_TICKS(150)); //150 ms to meet timing requirement of 5s for transmission
 	}
 
 	avg_gas = avg_gas / readings;

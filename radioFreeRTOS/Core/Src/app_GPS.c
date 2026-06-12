@@ -265,6 +265,8 @@ GPS_Status gps_call_location(GPS_PVT *out){
 				out->validDate = (p[11]>>0) & 1; //valid date check
 				out->validTime = (p[11]>>1) & 1; //valid time check
 				out->gnssFixOK = (p[21]>>0) & 1; //flag to check if the fix is in
+				out->numSV = p[23];
+				out->fixType = p[20];
 				out->lat = rd_i4(&p[28]); //latitude, convert little endian integers
 				out->lon = rd_i4(&p[24]); //longitude
 				return GPS_OK;
@@ -286,7 +288,7 @@ GPS_Status gps_config_nmea(uint8_t state) {
 	uint8_t payload[4 + 5 *2]; //header + 2 key-value pairs
 	uint16_t offset = 0;
 	payload[offset++] = 0x00; //version
-	payload[offset++] = 0x02; //ram
+	payload[offset++] = 0x01; //ram
 	payload[offset++] = 0x00; //reserved
 	payload[offset++] = 0x00; //reserved
 
@@ -425,7 +427,7 @@ void GpsTask(void *pvParameters){
 
 		GPS_Status ret = gps_call_location(&pvt);
 
-		len = snprintf(msg, sizeof(msg), "ret=%d fix=%d\r\n", ret, pvt.gnssFixOK);
+		len = snprintf(msg, sizeof(msg), "ret=%d fix=%d sV=%d fixtype=%d\r\n", ret, pvt.gnssFixOK, pvt.numSV, pvt.fixType);
 		HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
 
 		if (ret == GPS_OK ){ //Excluded && pvt.gnssFixOK for debugging purposes

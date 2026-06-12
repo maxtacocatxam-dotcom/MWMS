@@ -760,7 +760,7 @@ void bme68x_GetGasReference(void) {
 		}
 
 
-		vTaskDelay(pdMS_TO_TICKS(500));
+		vTaskDelay(pdMS_TO_TICKS(150));
 
 
 	}
@@ -1071,7 +1071,7 @@ void vSensorTask(void *pvParameters){
 		//Update the baseline with new data
 		bme680_update_baseline();
 
-		// Debug message indicating queue transmissio
+		// Debug message indicating queue transmission
 		len = snprintf(msg, sizeof(msg), "Sending Sensor to queue");
 		HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
 

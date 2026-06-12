@@ -236,6 +236,42 @@ void vAggTask(void *pvParameters)
                               (uint8_t *)msg,
                               len,
                               100);
+            /* Print serialized payload for verification */
+            char uart_buf[128];
+            int uart_len;
+
+            uart_len = snprintf(uart_buf,
+                                sizeof(uart_buf),
+                                "\r\nPayload HEX: ");
+
+            HAL_UART_Transmit(&huart2,
+                              (uint8_t *)uart_buf,
+                              uart_len,
+                              HAL_MAX_DELAY);
+
+            for (int i = 0; i < 22; i++)
+            {
+                uart_len = snprintf(uart_buf,
+                                    sizeof(uart_buf),
+                                    "%02X ",
+                                    payload[i]);
+
+                HAL_UART_Transmit(&huart2,
+                                  (uint8_t *)uart_buf,
+                                  uart_len,
+                                  HAL_MAX_DELAY);
+            }
+
+            uart_len = snprintf(uart_buf,
+                                sizeof(uart_buf),
+                                "\r\n");
+
+            HAL_UART_Transmit(&huart2,
+                              (uint8_t *)uart_buf,
+                              uart_len,
+                              HAL_MAX_DELAY);
+
+
 
             /*
              * Forward completed telemetry payload

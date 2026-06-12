@@ -29,6 +29,8 @@ typedef struct {
     bool     gnssFixOK;
     int32_t  lat;   // deg * 1e-7
     int32_t  lon;   // deg * 1e-7
+    uint8_t  fixType;	//0 = no fix, 2 = 2D, 3 = 3D
+    uint8_t  numSV;	//Number of satellites seen
 } GPS_PVT;
 
 void GpsTask(void *pvParameters);
